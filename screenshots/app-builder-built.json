@@ -1,0 +1,44 @@
+{
+  "url": "http://127.0.0.1:8081/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Auris",
+      "hasCanvas": true,
+      "bodyTextLen": 2144,
+      "bodyTextHash": "82b0e77db439a9f6f26fd806a901944060199910b9c195cefbedd78adca8db28",
+      "bodyTextPrefix": "Auris EEG sonification Educational aid — not a medical device. N",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Auris",
+      "hasCanvas": true,
+      "bodyTextLen": 414,
+      "bodyTextHash": "26b910e358046de47d53b9062b2049c7a2e6f3ea5967b20433b908b2e07fd5a7",
+      "bodyTextPrefix": "Auris MONTAGE Banana Transverse Ref LFF Off 0.5 1 1.6 5 HFF Off ",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-built-mobile.png"
+    }
+  },
+  "brandWarnings": [
+    "BRAND WARNING: this looks like a game/canvas app but src/lib/og/site.json is missing \"type\": \"x:game\". X uses og:type=x:game to present the unfurl as a game card — set it in /workspace/src/lib/og/site.json per /workspace/.grok/skills/og/SKILL.md. Do not invent x:type or overload twitter:card as the game signal.",
+    "BRAND WARNING: this looks like a game/canvas app but /workspace/public/x-banner.jpg is missing. Games need a 50:11 X feed card (1200×264 JPEG) at public/x-banner.jpg — open /workspace/.grok/skills/og/SKILL.md and finish the brand-asset pass."
+  ],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-built.json",
+  "divergesFromBaseline": true,
+  "baselineReasons": [
+    "desktop: body text collapsed (5445 -> 2144 chars)",
+    "mobile: body text changed (563 -> 414 chars, hash mismatch)"
+  ]
+}
