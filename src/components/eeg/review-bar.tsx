@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { HFF_PRESETS, LFF_PRESETS, PAGE_PRESETS, SENSITIVITY_PRESETS } from "@/lib/eeg/defaults";
+import { HFF_PRESETS, LFF_PRESETS, PAGE_PRESETS, MAX_SENSITIVITY_UV, MIN_SENSITIVITY_UV } from "@/lib/eeg/defaults";
 import { BAND_LABELS } from "@/lib/eeg/spectrum";
 import type { ColorMode, MontageKind, SonifyMode } from "@/lib/eeg/types";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,8 @@ export function ReviewBar() {
   const setFilters = useEegStore((s) => s.setFilters);
   const sensitivity = useEegStore((s) => s.sensitivityUv);
   const setSensitivity = useEegStore((s) => s.setSensitivity);
+  const nudgeSensitivity = useEegStore((s) => s.nudgeSensitivity);
+  const fitSensitivity = useEegStore((s) => s.fitSensitivity);
   const viewDuration = useEegStore((s) => s.viewDuration);
   const setViewDuration = useEegStore((s) => s.setViewDuration);
   const page = useEegStore((s) => s.page);
@@ -86,16 +88,55 @@ export function ReviewBar() {
         </button>
       </Group>
       <Group label="µV">
-        {SENSITIVITY_PRESETS.map((v) => (
+        <button
+          type="button"
+          title="More sensitive — bigger waves (,)"
+          onClick={() => nudgeSensitivity(-1)}
+          className={cn(chip, "bg-bg text-muted")}
+        >
+          −
+        </button>
+        <input
+          type="range"
+          min={Math.log10(MIN_SENSITIVITY_UV)}
+          max={Math.log10(MAX_SENSITIVITY_UV)}
+          step={0.01}
+          value={Math.log10(sensitivity)}
+          onChange={(e) => setSensitivity(10 ** Number(e.target.value))}
+          className="h-7 w-24 accent-accent"
+          aria-label="Display sensitivity in microvolts"
+        />
+        <button
+          type="button"
+          title="Less sensitive — smaller waves (.)"
+          onClick={() => nudgeSensitivity(1)}
+          className={cn(chip, "bg-bg text-muted")}
+        >
+          +
+        </button>
+        <span className="w-8 font-mono text-[0.625rem] tabular-nums text-muted">{sensitivity}</span>
+        {([30, 50, 70, 100, 150, 300] as const).map((v) => (
           <button
             key={v}
             type="button"
             onClick={() => setSensitivity(v)}
-            className={cn(chip, sensitivity === v ? "bg-accent text-accent-fg" : "bg-bg text-muted")}
+            className={cn(
+              chip,
+              "hidden md:inline-flex",
+              sensitivity === v ? "bg-accent text-accent-fg" : "bg-bg text-muted",
+            )}
           >
             {v}
           </button>
         ))}
+        <button
+          type="button"
+          title="Fit traces to the current page"
+          onClick={() => fitSensitivity()}
+          className={cn(chip, "bg-bg text-muted")}
+        >
+          Fit
+        </button>
       </Group>
       <Group label="Page">
         {PAGE_PRESETS.map((v) => (

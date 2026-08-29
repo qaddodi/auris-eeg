@@ -9,9 +9,11 @@ import {
   clamp,
   envelopeWindow,
   followViewStart,
+  interpWindow,
+  samplesPerPixel,
   timeAtFraction,
 } from "@/lib/eeg/view";
-import { MORPH_COLOR } from "@/lib/eeg/defaults";
+import { MORPH_COLOR, voltagePxPerUv } from "@/lib/eeg/defaults";
 import {
   BAND_COLORS,
   bandFromHz,
@@ -43,6 +45,8 @@ const OVERVIEW_H = 72;
 const DSA_H = 72;
 const EVENT_LANE = 18;
 const BAND_ORDER: BandName[] = ["delta", "theta", "alpha", "beta", "gamma"];
+/** Below this samples/pixel, min–max bars collapse — draw an interpolated polyline instead. */
+const MINMAX_SPP = 1.8;
 
 function sizeCanvas(canvas: HTMLCanvasElement, cssW: number, cssH: number, dpr: number) {
   const w = Math.max(1, Math.floor(cssW * dpr));
@@ -55,6 +59,24 @@ function sizeCanvas(canvas: HTMLCanvasElement, cssW: number, cssH: number, dpr: 
   }
 }
 
+function drawPolyline(
+  ctx: CanvasRenderingContext2D,
+  y: Float32Array,
+  x0: number,
+  mid: number,
+  scale: number,
+  sign: number,
+) {
+  ctx.beginPath();
+  for (let p = 0; p < y.length; p++) {
+    const x = x0 + p + 0.5;
+    const yy = mid + sign * y[p]! * scale;
+    if (p === 0) ctx.moveTo(x, yy);
+    else ctx.lineTo(x, yy);
+  }
+  ctx.stroke();
+}
+
 function drawLane(
   ctx: CanvasRenderingContext2D,
   min: Float32Array,
@@ -65,20 +87,19 @@ function drawLane(
   sign: number,
   color: string,
   alpha: number,
+  midV: Float32Array | null,
 ) {
   ctx.globalAlpha = alpha;
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1.1;
   ctx.lineJoin = "round";
-  ctx.beginPath();
-  for (let p = 0; p < min.length; p++) {
-    const x = x0 + p + 0.5;
-    const y = mid + sign * ((min[p]! + max[p]!) / 2) * scale;
-    if (p === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  ctx.lineCap = "round";
+  if (midV) {
+    ctx.lineWidth = 1.55;
+    drawPolyline(ctx, midV, x0, mid, scale, sign);
+    ctx.globalAlpha = 1;
+    return;
   }
-  ctx.stroke();
-  ctx.globalAlpha = alpha * 0.22;
+  ctx.globalAlpha = alpha * 0.38;
   ctx.fillStyle = color;
   ctx.beginPath();
   for (let p = 0; p < min.length; p++) {
@@ -88,11 +109,36 @@ function drawLane(
     else ctx.lineTo(x, yHi);
   }
   for (let p = min.length - 1; p >= 0; p--) {
-    const x = x0 + p + 0.5;
-    ctx.lineTo(x, mid + sign * min[p]! * scale);
+    ctx.lineTo(x0 + p + 0.5, mid + sign * min[p]! * scale);
   }
   ctx.closePath();
   ctx.fill();
+
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = 1.35;
+  ctx.beginPath();
+  for (let p = 0; p < min.length; p++) {
+    const x = x0 + p + 0.5;
+    ctx.moveTo(x, mid + sign * min[p]! * scale);
+    ctx.lineTo(x, mid + sign * max[p]! * scale);
+  }
+  ctx.stroke();
+  ctx.beginPath();
+  for (let p = 0; p < min.length; p++) {
+    const x = x0 + p + 0.5;
+    const y = mid + sign * max[p]! * scale;
+    if (p === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.beginPath();
+  for (let p = 0; p < min.length; p++) {
+    const x = x0 + p + 0.5;
+    const y = mid + sign * min[p]! * scale;
+    if (p === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
   ctx.globalAlpha = 1;
 }
 
@@ -106,29 +152,48 @@ function drawLaneBanded(
   scale: number,
   sign: number,
   alpha: number,
+  midV: Float32Array | null,
 ) {
   ctx.lineJoin = "round";
-  ctx.lineWidth = 1.15;
-  for (const band of BAND_ORDER) {
-    ctx.strokeStyle = BAND_COLORS[band];
-    ctx.globalAlpha = alpha;
+  ctx.lineCap = midV ? "round" : "butt";
+  ctx.lineWidth = midV ? 1.6 : 1.4;
+  ctx.globalAlpha = alpha;
+  if (midV) {
+    let band: BandName | null = null;
     ctx.beginPath();
-    let drawing = false;
-    for (let p = 0; p < min.length; p++) {
-      if (bandFromHz(hz[p] ?? 0) !== band) {
-        drawing = false;
-        continue;
-      }
+    for (let p = 0; p < midV.length; p++) {
+      const next = bandFromHz(hz[p] ?? 0);
       const x = x0 + p + 0.5;
-      const y = mid + sign * ((min[p]! + max[p]!) / 2) * scale;
-      if (!drawing) {
+      const y = mid + sign * midV[p]! * scale;
+      if (next !== band) {
+        if (band) {
+          ctx.lineTo(x, y);
+          ctx.stroke();
+          ctx.beginPath();
+        }
+        ctx.strokeStyle = BAND_COLORS[next];
         ctx.moveTo(x, y);
-        drawing = true;
-      } else ctx.lineTo(x, y);
+        band = next;
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    return;
+  }
+  for (const b of BAND_ORDER) {
+    ctx.strokeStyle = BAND_COLORS[b];
+    ctx.beginPath();
+    for (let p = 0; p < min.length; p++) {
+      if (bandFromHz(hz[p] ?? 0) !== b) continue;
+      const x = x0 + p + 0.5;
+      ctx.moveTo(x, mid + sign * min[p]! * scale);
+      ctx.lineTo(x, mid + sign * max[p]! * scale);
     }
     ctx.stroke();
   }
-  ctx.globalAlpha = alpha * 0.16;
+  ctx.globalAlpha = alpha * 0.22;
   ctx.beginPath();
   for (let p = 0; p < min.length; p++) {
     const x = x0 + p + 0.5;
@@ -643,14 +708,36 @@ function drawEditor(
     const color = KIND_COLOR[tr.kind] ?? LAT_COLOR[lat];
     const alpha = live ? 1 : anySolo || st?.mute ? 0.2 : 0.5;
     const { min, max } = envelopeWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix);
-    const scale = (laneH * 0.42) / Math.max(1, s.sensitivityUv);
+    const scale = voltagePxPerUv(laneH, s.sensitivityUv);
+    const spp = samplesPerPixel(tr.sampleRate, viewStart, viewEnd, nPix);
+    const midV = spp < MINMAX_SPP ? interpWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix) : null;
     if (colorByHz && tr.kind === "eeg") {
       const hz = freqWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix);
-      drawLaneBanded(ctx, min, max, hz, plotX, mid, scale, sign, alpha);
+      drawLaneBanded(ctx, min, max, hz, plotX, mid, scale, sign, alpha, midV);
     } else {
-      drawLane(ctx, min, max, plotX, mid, scale, sign, color, alpha);
+      drawLane(ctx, min, max, plotX, mid, scale, sign, color, alpha, midV);
     }
   });
+
+  if (list.length > 0 && laneH > 18) {
+    const mid = plotTop + laneH / 2;
+    const half = (laneH * 0.92) / 2;
+    const x = cssW - 5;
+    ctx.strokeStyle = "rgba(232,234,237,0.55)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x - 6, mid - half);
+    ctx.lineTo(x, mid - half);
+    ctx.lineTo(x, mid + half);
+    ctx.lineTo(x - 6, mid + half);
+    ctx.stroke();
+    ctx.fillStyle = "#8b919c";
+    ctx.font = "500 9px 'IBM Plex Mono', ui-monospace, monospace";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${s.sensitivityUv} µV`, x - 8, mid);
+    ctx.textAlign = "left";
+  }
 }
 
 function drawEditorOverlay(
@@ -745,15 +832,14 @@ function drawOverviewWaves(
     const mid = 4 + i * laneH + laneH / 2;
     const lat = s.tracks[tr.id]?.lateralityOverride ?? tr.laterality;
     const { min, max } = envelopeWindow(tr.samples, tr.sampleRate, 0, total, nPix);
-    const scale = (laneH * 0.46) / Math.max(1, s.sensitivityUv);
-    ctx.globalAlpha = 0.85;
+    const scale = voltagePxPerUv(laneH, s.sensitivityUv);
+    ctx.globalAlpha = 0.9;
     ctx.strokeStyle = KIND_COLOR[tr.kind] ?? LAT_COLOR[lat];
-    ctx.lineWidth = 0.8;
+    ctx.lineWidth = 1;
     ctx.beginPath();
     for (let p = 0; p < min.length; p++) {
-      const y = mid + sign * ((min[p]! + max[p]!) / 2) * scale;
-      if (p === 0) ctx.moveTo(p + 0.5, y);
-      else ctx.lineTo(p + 0.5, y);
+      ctx.moveTo(p + 0.5, mid + sign * min[p]! * scale);
+      ctx.lineTo(p + 0.5, mid + sign * max[p]! * scale);
     }
     ctx.stroke();
     ctx.globalAlpha = 1;

@@ -33,7 +33,14 @@ import {
   sine,
   spikeAndWave,
 } from "./synthetic.ts";
-import { clampView, envelopeWindow, followViewStart, zoomView } from "./view.ts";
+import { clampView, envelopeWindow, fitSensitivityUv, followViewStart, interpWindow, samplesPerPixel, zoomView } from "./view.ts";
+import {
+  clampSensitivity,
+  DEFAULT_SENSITIVITY_UV,
+  snapSensitivity,
+  stepSensitivity,
+  voltagePxPerUv,
+} from "./defaults.ts";
 import { choirVoice, eegHzToScaleHz, ekgVoice, scaleVoice } from "./musify.ts";
 import { voltageToMidi, renderContour, waveAbnormality } from "./contour.ts";
 import { detectMorphologies, detectTransients } from "./patterns.ts";
@@ -387,6 +394,39 @@ describe("editor view", () => {
     assert.equal(min.length, 20);
     assert.ok(Math.max(...max) > 40);
     assert.ok(Math.min(...min) < -40);
+  });
+
+  it("interpolated zoom keeps the sine amplitude", () => {
+    const x = sine(10, 256, 1, 50);
+    assert.ok(samplesPerPixel(256, 0, 0.5, 1000) < 1);
+    const y = interpWindow(x, 256, 0, 0.5, 400);
+    const peak = Math.max(...y.map(Math.abs));
+    assert.ok(peak > 40 && peak < 55, `peak ${peak}`);
+    const { min, max } = envelopeWindow(x, 256, 0, 0.5, 400);
+    let same = 0;
+    for (let i = 0; i < min.length; i++) if (Math.abs(max[i]! - min[i]!) < 1e-6) same++;
+    assert.ok(same > min.length * 0.8, "zoomed-in envelope is degenerate");
+  });
+
+  it("sensitivity steps and snaps like a gain control", () => {
+    assert.equal(stepSensitivity(70, -1), 50);
+    assert.equal(stepSensitivity(70, 1), 100);
+    assert.equal(stepSensitivity(15, -1), 15);
+    assert.equal(snapSensitivity(68), 70);
+    assert.equal(clampSensitivity(3), 10);
+    assert.ok(voltagePxPerUv(40, 70) > voltagePxPerUv(40, 150));
+    assert.equal(DEFAULT_SENSITIVITY_UV, 70);
+  });
+
+  it("fit sensitivity grows when the tracing is small", () => {
+    const fs = 200;
+    const quiet = sine(10, fs, 1, 8);
+    const loud = sine(10, fs, 1, 80);
+    const q = fitSensitivityUv([{ samples: quiet, sampleRate: fs, kind: "eeg" }], 0, 1);
+    const l = fitSensitivityUv([{ samples: loud, sampleRate: fs, kind: "eeg" }], 0, 1);
+    assert.ok(q < l, `quiet ${q} loud ${l}`);
+    assert.ok(q <= 50, `quiet fit ${q}`);
+    assert.ok(l >= 150, `loud fit ${l}`);
   });
 });
 

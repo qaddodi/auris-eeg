@@ -2,7 +2,7 @@
 
 import { useRef } from "react";
 import { Upload } from "lucide-react";
-import { COMPRESSION_PRESETS, ROOT_NOTES, SENSITIVITY_PRESETS, TIME_SCALE_PRESETS } from "@/lib/eeg/defaults";
+import { COMPRESSION_PRESETS, ROOT_NOTES, SENSITIVITY_PRESETS, TIME_SCALE_PRESETS, MIN_SENSITIVITY_UV, MAX_SENSITIVITY_UV } from "@/lib/eeg/defaults";
 import { describeMapping } from "@/lib/eeg/sonify";
 import { SCALE_LABELS } from "@/lib/eeg/musify";
 import { STANDARD_ELECTRODES } from "@/lib/eeg/montages";
@@ -43,6 +43,8 @@ export function ControlPanel() {
   const setNegativeUp = useEegStore((s) => s.setNegativeUp);
   const sensitivityUv = useEegStore((s) => s.sensitivityUv);
   const setSensitivity = useEegStore((s) => s.setSensitivity);
+  const nudgeSensitivity = useEegStore((s) => s.nudgeSensitivity);
+  const fitSensitivity = useEegStore((s) => s.fitSensitivity);
   const customA = useEegStore((s) => s.customA);
   const customB = useEegStore((s) => s.customB);
   const customPairs = useEegStore((s) => s.customPairs);
@@ -280,7 +282,39 @@ export function ControlPanel() {
         </p>
         <div className="flex items-center justify-between gap-2">
           <Label>Sensitivity</Label>
-          <span className="font-mono text-xs tabular-nums text-muted">{sensitivityUv} µV/lane</span>
+          <span className="font-mono text-xs tabular-nums text-muted">{sensitivityUv} µV p–p</span>
+        </div>
+        <p className="text-[0.6875rem] text-subtle">Lower µV = bigger waves. Fit sizes the page to the tracing.</p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="grid h-7 w-7 place-items-center rounded-sm bg-bg text-sm text-muted shadow-border"
+            onClick={() => nudgeSensitivity(-1)}
+            aria-label="Increase gain"
+          >
+            −
+          </button>
+          <input
+            type="range"
+            min={Math.log10(MIN_SENSITIVITY_UV)}
+            max={Math.log10(MAX_SENSITIVITY_UV)}
+            step={0.01}
+            value={Math.log10(sensitivityUv)}
+            onChange={(e) => setSensitivity(10 ** Number(e.target.value))}
+            className="h-7 flex-1 accent-accent"
+            aria-label="Display sensitivity"
+          />
+          <button
+            type="button"
+            className="grid h-7 w-7 place-items-center rounded-sm bg-bg text-sm text-muted shadow-border"
+            onClick={() => nudgeSensitivity(1)}
+            aria-label="Decrease gain"
+          >
+            +
+          </button>
+          <Button type="button" size="sm" variant="secondary" onClick={() => fitSensitivity()}>
+            Fit
+          </Button>
         </div>
         <div className="flex flex-wrap gap-1">
           {SENSITIVITY_PRESETS.map((d) => (

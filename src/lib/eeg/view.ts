@@ -1,3 +1,5 @@
+import { clampSensitivity, snapSensitivity } from "./defaults.ts";
+
 export const MIN_VIEW_SEC = 0.5;
 export const DEFAULT_VIEW_SEC = 10;
 export const FOLLOW_FRAC = 0.3;
@@ -87,4 +89,62 @@ export function envelopeWindow(
     max[p] = hi === -Infinity ? 0 : hi;
   }
   return { min, max };
+}
+
+export function samplesPerPixel(sampleRate: number, t0: number, t1: number, nPix: number): number {
+  if (nPix <= 0 || sampleRate <= 0) return 0;
+  return ((t1 - t0) * sampleRate) / nPix;
+}
+
+/** Linear-interpolated sample at each pixel center — used when zoomed in past 1 sample/px. */
+export function interpWindow(
+  samples: Float32Array,
+  sampleRate: number,
+  t0: number,
+  t1: number,
+  nPix: number,
+): Float32Array {
+  const y = new Float32Array(Math.max(0, nPix));
+  if (samples.length === 0 || nPix <= 0 || t1 <= t0 || sampleRate <= 0) return y;
+  const span = t1 - t0;
+  const last = samples.length - 1;
+  for (let p = 0; p < nPix; p++) {
+    const idx = (t0 + ((p + 0.5) / nPix) * span) * sampleRate;
+    if (idx <= 0) {
+      y[p] = samples[0] ?? 0;
+      continue;
+    }
+    if (idx >= last) {
+      y[p] = samples[last] ?? 0;
+      continue;
+    }
+    const i = Math.floor(idx);
+    const f = idx - i;
+    y[p] = (samples[i] ?? 0) * (1 - f) + (samples[i + 1] ?? 0) * f;
+  }
+  return y;
+}
+
+/** Choose µV/lane so typical |voltage| in the window fills most of a channel. */
+export function fitSensitivityUv(
+  tracks: { samples: Float32Array; sampleRate: number; kind: string }[],
+  t0: number,
+  t1: number,
+): number {
+  let p97 = 0;
+  for (const tr of tracks) {
+    if (tr.kind !== "eeg" && tr.kind !== "eog") continue;
+    const i0 = Math.max(0, Math.floor(t0 * tr.sampleRate));
+    const i1 = Math.min(tr.samples.length, Math.max(i0 + 1, Math.ceil(t1 * tr.sampleRate)));
+    const n = i1 - i0;
+    if (n <= 0) continue;
+    const step = Math.max(1, Math.floor(n / 6000));
+    const vals: number[] = [];
+    for (let i = i0; i < i1; i += step) vals.push(Math.abs(tr.samples[i] ?? 0));
+    if (vals.length === 0) continue;
+    vals.sort((a, b) => a - b);
+    const v = vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.97))] ?? 0;
+    if (v > p97) p97 = v;
+  }
+  return snapSensitivity(clampSensitivity(Math.max(15, p97 * 2.8)));
 }

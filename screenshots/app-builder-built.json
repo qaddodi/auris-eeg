@@ -7,8 +7,8 @@
       "status": 200,
       "title": "Auris",
       "hasCanvas": true,
-      "bodyTextLen": 2144,
-      "bodyTextHash": "82b0e77db439a9f6f26fd806a901944060199910b9c195cefbedd78adca8db28",
+      "bodyTextLen": 2243,
+      "bodyTextHash": "81a7742fa1df8243bcaaa9aedad376d12b0c6beda6db5e1f8871863d2b8f623d",
       "bodyTextPrefix": "Auris EEG sonification Educational aid — not a medical device. N",
       "horizontalOverflow": false,
       "consoleErrors": [],
@@ -21,8 +21,8 @@
       "status": 200,
       "title": "Auris",
       "hasCanvas": true,
-      "bodyTextLen": 414,
-      "bodyTextHash": "26b910e358046de47d53b9062b2049c7a2e6f3ea5967b20433b908b2e07fd5a7",
+      "bodyTextLen": 403,
+      "bodyTextHash": "d5166fa4f697f2909c19fb427bcafa062d8a95d84b8bff6236513826c3fc24ea",
       "bodyTextPrefix": "Auris MONTAGE Banana Transverse Ref LFF Off 0.5 1 1.6 5 HFF Off ",
       "horizontalOverflow": false,
       "consoleErrors": [],
@@ -38,7 +38,6 @@
   "verdictFile": "/workspace/screenshots/app-builder-built.json",
   "divergesFromBaseline": true,
   "baselineReasons": [
-    "desktop: body text collapsed (5445 -> 2144 chars)",
-    "mobile: body text changed (563 -> 414 chars, hash mismatch)"
+    "mobile: body text changed (573 -> 403 chars, hash mismatch)"
   ]
 }

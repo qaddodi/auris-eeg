@@ -57,6 +57,16 @@ export function useEditorKeys() {
         s.setColorBy(s.colorBy === "band" ? "hemi" : "band");
         return;
       }
+      if (e.key === "," || e.key === "<") {
+        e.preventDefault();
+        s.nudgeSensitivity(-1);
+        return;
+      }
+      if (e.key === "." || e.key === ">") {
+        e.preventDefault();
+        s.nudgeSensitivity(1);
+        return;
+      }
       if (e.key === "a" || e.key === "A") {
         e.preventDefault();
         s.setTool(s.tool === "annotate" ? "pointer" : "annotate");

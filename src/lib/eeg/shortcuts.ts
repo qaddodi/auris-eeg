@@ -25,6 +25,8 @@ export const SHORTCUTS: Shortcut[] = [
   { group: "Review", keys: ["H"], action: "Hide / show annotations" },
   { group: "Review", keys: ["D"], action: "Show / hide DSA spectrogram" },
   { group: "Review", keys: ["B"], action: "Color traces by hemisphere or Hz" },
+  { group: "Review", keys: [",", "<"], action: "Bigger waves (more sensitive)" },
+  { group: "Review", keys: [".", ">"], action: "Smaller waves (less sensitive)" },
   { group: "Review", keys: ["Click (annotate)"], action: "Drop a marker" },
   { group: "Tracks", keys: ["S"], action: "Solo this track (multi-solo)" },
   { group: "Tracks", keys: ["M"], action: "Mute this track" },

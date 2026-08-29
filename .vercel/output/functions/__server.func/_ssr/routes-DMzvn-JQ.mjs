@@ -6,7 +6,7 @@ import { n as clsx, t as cva } from "../_libs/class-variance-authority+clsx.mjs"
 import { t as Slot } from "../_libs/radix-ui__react-slot.mjs";
 import { t as twMerge } from "../_libs/tailwind-merge.mjs";
 import { t as create } from "../_libs/zustand.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/routes-BcwC6LK6.js
+//#region node_modules/.nitro/vite/services/ssr/assets/routes-DMzvn-JQ.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 function cn(...inputs) {
@@ -93,13 +93,52 @@ var PAGE_PRESETS = [
 	30
 ];
 var SENSITIVITY_PRESETS = [
+	15,
+	20,
+	30,
 	50,
 	70,
 	100,
 	150,
 	200,
-	300
+	300,
+	500,
+	1e3,
+	2e3
 ];
+var MAX_SENSITIVITY_UV = 2e3;
+/** Fraction of a channel lane filled by `sensitivityUv` peak-to-peak. */
+var LANE_FILL = .92;
+function clampSensitivity(n) {
+	if (!Number.isFinite(n)) return 70;
+	return Math.min(MAX_SENSITIVITY_UV, Math.max(10, Math.round(n)));
+}
+/** dir −1 = more sensitive (bigger waves); +1 = less sensitive. */
+function stepSensitivity(current, dir) {
+	const cur = clampSensitivity(current);
+	if (dir < 0) {
+		for (let i = SENSITIVITY_PRESETS.length - 1; i >= 0; i--) if (SENSITIVITY_PRESETS[i] < cur) return SENSITIVITY_PRESETS[i];
+		return SENSITIVITY_PRESETS[0];
+	}
+	for (const v of SENSITIVITY_PRESETS) if (v > cur) return v;
+	return SENSITIVITY_PRESETS[SENSITIVITY_PRESETS.length - 1];
+}
+function snapSensitivity(n) {
+	const c = clampSensitivity(n);
+	let best = SENSITIVITY_PRESETS[0];
+	let bestD = Math.abs(best - c);
+	for (const p of SENSITIVITY_PRESETS) {
+		const d = Math.abs(p - c);
+		if (d < bestD) {
+			best = p;
+			bestD = d;
+		}
+	}
+	return best;
+}
+function voltagePxPerUv(laneH, sensitivityUv) {
+	return laneH * LANE_FILL / Math.max(10, sensitivityUv);
+}
 var LFF_PRESETS = [
 	0,
 	.5,
@@ -1026,6 +1065,51 @@ function envelopeWindow(samples, sampleRate, t0, t1, nPix) {
 		min,
 		max
 	};
+}
+function samplesPerPixel(sampleRate, t0, t1, nPix) {
+	if (nPix <= 0 || sampleRate <= 0) return 0;
+	return (t1 - t0) * sampleRate / nPix;
+}
+/** Linear-interpolated sample at each pixel center — used when zoomed in past 1 sample/px. */
+function interpWindow(samples, sampleRate, t0, t1, nPix) {
+	const y = new Float32Array(Math.max(0, nPix));
+	if (samples.length === 0 || nPix <= 0 || t1 <= t0 || sampleRate <= 0) return y;
+	const span = t1 - t0;
+	const last = samples.length - 1;
+	for (let p = 0; p < nPix; p++) {
+		const idx = (t0 + (p + .5) / nPix * span) * sampleRate;
+		if (idx <= 0) {
+			y[p] = samples[0] ?? 0;
+			continue;
+		}
+		if (idx >= last) {
+			y[p] = samples[last] ?? 0;
+			continue;
+		}
+		const i = Math.floor(idx);
+		const f = idx - i;
+		y[p] = (samples[i] ?? 0) * (1 - f) + (samples[i + 1] ?? 0) * f;
+	}
+	return y;
+}
+/** Choose µV/lane so typical |voltage| in the window fills most of a channel. */
+function fitSensitivityUv(tracks, t0, t1) {
+	let p97 = 0;
+	for (const tr of tracks) {
+		if (tr.kind !== "eeg" && tr.kind !== "eog") continue;
+		const i0 = Math.max(0, Math.floor(t0 * tr.sampleRate));
+		const i1 = Math.min(tr.samples.length, Math.max(i0 + 1, Math.ceil(t1 * tr.sampleRate)));
+		const n = i1 - i0;
+		if (n <= 0) continue;
+		const step = Math.max(1, Math.floor(n / 6e3));
+		const vals = [];
+		for (let i = i0; i < i1; i += step) vals.push(Math.abs(tr.samples[i] ?? 0));
+		if (vals.length === 0) continue;
+		vals.sort((a, b) => a - b);
+		const v = vals[Math.min(vals.length - 1, Math.floor(vals.length * .97))] ?? 0;
+		if (v > p97) p97 = v;
+	}
+	return snapSensitivity(clampSensitivity(Math.max(15, p97 * 2.8)));
 }
 function Label({ className, ...props }) {
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
@@ -2173,7 +2257,7 @@ var useEegStore = create((set, get) => {
 		sonify: { ...DEFAULT_SONIFY },
 		combine: "stereo",
 		negativeUp: true,
-		sensitivityUv: 150,
+		sensitivityUv: 70,
 		segment: null,
 		mix: null,
 		wavUrl: null,
@@ -2409,7 +2493,13 @@ var useEegStore = create((set, get) => {
 			customA: a,
 			customB: b
 		}),
-		setSensitivity: (n) => set({ sensitivityUv: n }),
+		setSensitivity: (n) => set({ sensitivityUv: clampSensitivity(n) }),
+		nudgeSensitivity: (dir) => set({ sensitivityUv: stepSensitivity(get().sensitivityUv, dir) }),
+		fitSensitivity: () => {
+			const { segment, viewStart, viewDuration } = get();
+			if (!segment) return;
+			set({ sensitivityUv: fitSensitivityUv(segment.tracks, viewStart, viewStart + viewDuration) });
+		},
 		setNegativeUp: (v) => {
 			set({ negativeUp: v });
 			playback.setSettings(get().sonify, v);
@@ -2873,6 +2963,8 @@ function ControlPanel() {
 	const setNegativeUp = useEegStore((s) => s.setNegativeUp);
 	const sensitivityUv = useEegStore((s) => s.sensitivityUv);
 	const setSensitivity = useEegStore((s) => s.setSensitivity);
+	const nudgeSensitivity = useEegStore((s) => s.nudgeSensitivity);
+	const fitSensitivity = useEegStore((s) => s.fitSensitivity);
 	const customA = useEegStore((s) => s.customA);
 	const customB = useEegStore((s) => s.customB);
 	const customPairs = useEegStore((s) => s.customPairs);
@@ -3160,8 +3252,48 @@ function ControlPanel() {
 						className: "flex items-center justify-between gap-2",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Label, { children: "Sensitivity" }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
 							className: "font-mono text-xs tabular-nums text-muted",
-							children: [sensitivityUv, " µV/lane"]
+							children: [sensitivityUv, " µV p–p"]
 						})]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+						className: "text-[0.6875rem] text-subtle",
+						children: "Lower µV = bigger waves. Fit sizes the page to the tracing."
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "flex items-center gap-2",
+						children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: "grid h-7 w-7 place-items-center rounded-sm bg-bg text-sm text-muted shadow-border",
+								onClick: () => nudgeSensitivity(-1),
+								"aria-label": "Increase gain",
+								children: "−"
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+								type: "range",
+								min: Math.log10(10),
+								max: Math.log10(MAX_SENSITIVITY_UV),
+								step: .01,
+								value: Math.log10(sensitivityUv),
+								onChange: (e) => setSensitivity(10 ** Number(e.target.value)),
+								className: "h-7 flex-1 accent-accent",
+								"aria-label": "Display sensitivity"
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: "grid h-7 w-7 place-items-center rounded-sm bg-bg text-sm text-muted shadow-border",
+								onClick: () => nudgeSensitivity(1),
+								"aria-label": "Decrease gain",
+								children: "+"
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Button, {
+								type: "button",
+								size: "sm",
+								variant: "secondary",
+								onClick: () => fitSensitivity(),
+								children: "Fit"
+							})
+						]
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 						className: "flex flex-wrap gap-1",
@@ -3594,6 +3726,8 @@ var BAND_ORDER = [
 	"beta",
 	"gamma"
 ];
+/** Below this samples/pixel, min–max bars collapse — draw an interpolated polyline instead. */
+var MINMAX_SPP = 1.8;
 function sizeCanvas(canvas, cssW, cssH, dpr) {
 	const w = Math.max(1, Math.floor(cssW * dpr));
 	const h = Math.max(1, Math.floor(cssH * dpr));
@@ -3604,20 +3738,28 @@ function sizeCanvas(canvas, cssW, cssH, dpr) {
 		canvas.style.height = `${cssH}px`;
 	}
 }
-function drawLane(ctx, min, max, x0, mid, scale, sign, color, alpha) {
-	ctx.globalAlpha = alpha;
-	ctx.strokeStyle = color;
-	ctx.lineWidth = 1.1;
-	ctx.lineJoin = "round";
+function drawPolyline(ctx, y, x0, mid, scale, sign) {
 	ctx.beginPath();
-	for (let p = 0; p < min.length; p++) {
+	for (let p = 0; p < y.length; p++) {
 		const x = x0 + p + .5;
-		const y = mid + sign * ((min[p] + max[p]) / 2) * scale;
-		if (p === 0) ctx.moveTo(x, y);
-		else ctx.lineTo(x, y);
+		const yy = mid + sign * y[p] * scale;
+		if (p === 0) ctx.moveTo(x, yy);
+		else ctx.lineTo(x, yy);
 	}
 	ctx.stroke();
-	ctx.globalAlpha = alpha * .22;
+}
+function drawLane(ctx, min, max, x0, mid, scale, sign, color, alpha, midV) {
+	ctx.globalAlpha = alpha;
+	ctx.strokeStyle = color;
+	ctx.lineJoin = "round";
+	ctx.lineCap = "round";
+	if (midV) {
+		ctx.lineWidth = 1.55;
+		drawPolyline(ctx, midV, x0, mid, scale, sign);
+		ctx.globalAlpha = 1;
+		return;
+	}
+	ctx.globalAlpha = alpha * .38;
 	ctx.fillStyle = color;
 	ctx.beginPath();
 	for (let p = 0; p < min.length; p++) {
@@ -3626,37 +3768,75 @@ function drawLane(ctx, min, max, x0, mid, scale, sign, color, alpha) {
 		if (p === 0) ctx.moveTo(x, yHi);
 		else ctx.lineTo(x, yHi);
 	}
-	for (let p = min.length - 1; p >= 0; p--) {
-		const x = x0 + p + .5;
-		ctx.lineTo(x, mid + sign * min[p] * scale);
-	}
+	for (let p = min.length - 1; p >= 0; p--) ctx.lineTo(x0 + p + .5, mid + sign * min[p] * scale);
 	ctx.closePath();
 	ctx.fill();
+	ctx.globalAlpha = alpha;
+	ctx.lineWidth = 1.35;
+	ctx.beginPath();
+	for (let p = 0; p < min.length; p++) {
+		const x = x0 + p + .5;
+		ctx.moveTo(x, mid + sign * min[p] * scale);
+		ctx.lineTo(x, mid + sign * max[p] * scale);
+	}
+	ctx.stroke();
+	ctx.beginPath();
+	for (let p = 0; p < min.length; p++) {
+		const x = x0 + p + .5;
+		const y = mid + sign * max[p] * scale;
+		if (p === 0) ctx.moveTo(x, y);
+		else ctx.lineTo(x, y);
+	}
+	ctx.stroke();
+	ctx.beginPath();
+	for (let p = 0; p < min.length; p++) {
+		const x = x0 + p + .5;
+		const y = mid + sign * min[p] * scale;
+		if (p === 0) ctx.moveTo(x, y);
+		else ctx.lineTo(x, y);
+	}
+	ctx.stroke();
 	ctx.globalAlpha = 1;
 }
-function drawLaneBanded(ctx, min, max, hz, x0, mid, scale, sign, alpha) {
+function drawLaneBanded(ctx, min, max, hz, x0, mid, scale, sign, alpha, midV) {
 	ctx.lineJoin = "round";
-	ctx.lineWidth = 1.15;
-	for (const band of BAND_ORDER) {
-		ctx.strokeStyle = BAND_COLORS[band];
-		ctx.globalAlpha = alpha;
+	ctx.lineCap = midV ? "round" : "butt";
+	ctx.lineWidth = midV ? 1.6 : 1.4;
+	ctx.globalAlpha = alpha;
+	if (midV) {
+		let band = null;
 		ctx.beginPath();
-		let drawing = false;
-		for (let p = 0; p < min.length; p++) {
-			if (bandFromHz(hz[p] ?? 0) !== band) {
-				drawing = false;
-				continue;
-			}
+		for (let p = 0; p < midV.length; p++) {
+			const next = bandFromHz(hz[p] ?? 0);
 			const x = x0 + p + .5;
-			const y = mid + sign * ((min[p] + max[p]) / 2) * scale;
-			if (!drawing) {
+			const y = mid + sign * midV[p] * scale;
+			if (next !== band) {
+				if (band) {
+					ctx.lineTo(x, y);
+					ctx.stroke();
+					ctx.beginPath();
+				}
+				ctx.strokeStyle = BAND_COLORS[next];
 				ctx.moveTo(x, y);
-				drawing = true;
+				band = next;
 			} else ctx.lineTo(x, y);
 		}
 		ctx.stroke();
+		ctx.globalAlpha = 1;
+		return;
 	}
-	ctx.globalAlpha = alpha * .16;
+	for (const b of BAND_ORDER) {
+		ctx.strokeStyle = BAND_COLORS[b];
+		ctx.beginPath();
+		for (let p = 0; p < min.length; p++) {
+			if (bandFromHz(hz[p] ?? 0) !== b) continue;
+			const x = x0 + p + .5;
+			ctx.moveTo(x, mid + sign * min[p] * scale);
+			ctx.lineTo(x, mid + sign * max[p] * scale);
+		}
+		ctx.stroke();
+	}
+	ctx.globalAlpha = alpha * .22;
 	ctx.beginPath();
 	for (let p = 0; p < min.length; p++) {
 		const x = x0 + p + .5;
@@ -4153,10 +4333,30 @@ function drawEditor(ctx, cssW, cssH, list, s, viewStart, viewEnd) {
 		const color = KIND_COLOR[tr.kind] ?? LAT_COLOR[lat];
 		const alpha = live ? 1 : anySolo || st?.mute ? .2 : .5;
 		const { min, max } = envelopeWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix);
-		const scale = laneH * .42 / Math.max(1, s.sensitivityUv);
-		if (colorByHz && tr.kind === "eeg") drawLaneBanded(ctx, min, max, freqWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix), plotX, mid, scale, sign, alpha);
-		else drawLane(ctx, min, max, plotX, mid, scale, sign, color, alpha);
+		const scale = voltagePxPerUv(laneH, s.sensitivityUv);
+		const midV = samplesPerPixel(tr.sampleRate, viewStart, viewEnd, nPix) < MINMAX_SPP ? interpWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix) : null;
+		if (colorByHz && tr.kind === "eeg") drawLaneBanded(ctx, min, max, freqWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix), plotX, mid, scale, sign, alpha, midV);
+		else drawLane(ctx, min, max, plotX, mid, scale, sign, color, alpha, midV);
 	});
+	if (list.length > 0 && laneH > 18) {
+		const mid = plotTop + laneH / 2;
+		const half = laneH * .92 / 2;
+		const x = cssW - 5;
+		ctx.strokeStyle = "rgba(232,234,237,0.55)";
+		ctx.lineWidth = 1;
+		ctx.beginPath();
+		ctx.moveTo(x - 6, mid - half);
+		ctx.lineTo(x, mid - half);
+		ctx.lineTo(x, mid + half);
+		ctx.lineTo(x - 6, mid + half);
+		ctx.stroke();
+		ctx.fillStyle = "#8b919c";
+		ctx.font = "500 9px 'IBM Plex Mono', ui-monospace, monospace";
+		ctx.textAlign = "right";
+		ctx.textBaseline = "middle";
+		ctx.fillText(`${s.sensitivityUv} µV`, x - 8, mid);
+		ctx.textAlign = "left";
+	}
 }
 function drawEditorOverlay(ctx, cssW, cssH, t, viewStart, viewDur, _total, annotations = [], showAuto = true, selected = null, caliper = null, showAnnotations = true) {
 	const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -4226,15 +4426,14 @@ function drawOverviewWaves(ctx, cssW, cssH, list, s, total) {
 		const mid = 4 + i * laneH + laneH / 2;
 		const lat = s.tracks[tr.id]?.lateralityOverride ?? tr.laterality;
 		const { min, max } = envelopeWindow(tr.samples, tr.sampleRate, 0, total, nPix);
-		const scale = laneH * .46 / Math.max(1, s.sensitivityUv);
-		ctx.globalAlpha = .85;
+		const scale = voltagePxPerUv(laneH, s.sensitivityUv);
+		ctx.globalAlpha = .9;
 		ctx.strokeStyle = KIND_COLOR[tr.kind] ?? LAT_COLOR[lat];
-		ctx.lineWidth = .8;
+		ctx.lineWidth = 1;
 		ctx.beginPath();
 		for (let p = 0; p < min.length; p++) {
-			const y = mid + sign * ((min[p] + max[p]) / 2) * scale;
-			if (p === 0) ctx.moveTo(p + .5, y);
-			else ctx.lineTo(p + .5, y);
+			ctx.moveTo(p + .5, mid + sign * min[p] * scale);
+			ctx.lineTo(p + .5, mid + sign * max[p] * scale);
 		}
 		ctx.stroke();
 		ctx.globalAlpha = 1;
@@ -4410,6 +4609,8 @@ function ReviewBar() {
 	const setFilters = useEegStore((s) => s.setFilters);
 	const sensitivity = useEegStore((s) => s.sensitivityUv);
 	const setSensitivity = useEegStore((s) => s.setSensitivity);
+	const nudgeSensitivity = useEegStore((s) => s.nudgeSensitivity);
+	const fitSensitivity = useEegStore((s) => s.fitSensitivity);
 	const viewDuration = useEegStore((s) => s.viewDuration);
 	const setViewDuration = useEegStore((s) => s.setViewDuration);
 	const page = useEegStore((s) => s.page);
@@ -4474,14 +4675,58 @@ function ReviewBar() {
 					children: "60"
 				})
 			}),
-			/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Group, {
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Group, {
 				label: "µV",
-				children: SENSITIVITY_PRESETS.map((v) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-					type: "button",
-					onClick: () => setSensitivity(v),
-					className: cn(chip, sensitivity === v ? "bg-accent text-accent-fg" : "bg-bg text-muted"),
-					children: v
-				}, v))
+				children: [
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+						type: "button",
+						title: "More sensitive — bigger waves (,)",
+						onClick: () => nudgeSensitivity(-1),
+						className: cn(chip, "bg-bg text-muted"),
+						children: "−"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+						type: "range",
+						min: Math.log10(10),
+						max: Math.log10(MAX_SENSITIVITY_UV),
+						step: .01,
+						value: Math.log10(sensitivity),
+						onChange: (e) => setSensitivity(10 ** Number(e.target.value)),
+						className: "h-7 w-24 accent-accent",
+						"aria-label": "Display sensitivity in microvolts"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+						type: "button",
+						title: "Less sensitive — smaller waves (.)",
+						onClick: () => nudgeSensitivity(1),
+						className: cn(chip, "bg-bg text-muted"),
+						children: "+"
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+						className: "w-8 font-mono text-[0.625rem] tabular-nums text-muted",
+						children: sensitivity
+					}),
+					[
+						30,
+						50,
+						70,
+						100,
+						150,
+						300
+					].map((v) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+						type: "button",
+						onClick: () => setSensitivity(v),
+						className: cn(chip, "hidden md:inline-flex", sensitivity === v ? "bg-accent text-accent-fg" : "bg-bg text-muted"),
+						children: v
+					}, v)),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+						type: "button",
+						title: "Fit traces to the current page",
+						onClick: () => fitSensitivity(),
+						className: cn(chip, "bg-bg text-muted"),
+						children: "Fit"
+					})
+				]
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Group, {
 				label: "Page",
@@ -4673,6 +4918,16 @@ function useEditorKeys() {
 			if (e.key === "b" || e.key === "B") {
 				e.preventDefault();
 				s.setColorBy(s.colorBy === "band" ? "hemi" : "band");
+				return;
+			}
+			if (e.key === "," || e.key === "<") {
+				e.preventDefault();
+				s.nudgeSensitivity(-1);
+				return;
+			}
+			if (e.key === "." || e.key === ">") {
+				e.preventDefault();
+				s.nudgeSensitivity(1);
 				return;
 			}
 			if (e.key === "a" || e.key === "A") {
@@ -4873,6 +5128,16 @@ var SHORTCUTS = [
 		group: "Review",
 		keys: ["B"],
 		action: "Color traces by hemisphere or Hz"
+	},
+	{
+		group: "Review",
+		keys: [",", "<"],
+		action: "Bigger waves (more sensitive)"
+	},
+	{
+		group: "Review",
+		keys: [".", ">"],
+		action: "Smaller waves (less sensitive)"
 	},
 	{
 		group: "Review",

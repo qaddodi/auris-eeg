@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 import { encodeWav, playback } from "@/lib/eeg/audio";
-import { DEFAULT_FILTERS, DEFAULT_SONIFY } from "@/lib/eeg/defaults";
+import { DEFAULT_FILTERS, DEFAULT_SONIFY, clampSensitivity, DEFAULT_SENSITIVITY_UV, stepSensitivity } from "@/lib/eeg/defaults";
 import { loadRecording } from "@/lib/eeg/edf";
 import {
   audibleIds,
@@ -13,7 +13,7 @@ import {
 } from "@/lib/eeg/pipeline";
 import { detectMorphologies, spikesForTrack } from "@/lib/eeg/patterns";
 import { buildDsa } from "@/lib/eeg/spectrum";
-import { clampView, DEFAULT_VIEW_SEC, followViewStart, zoomView } from "@/lib/eeg/view";
+import { clampView, DEFAULT_VIEW_SEC, fitSensitivityUv, followViewStart, zoomView } from "@/lib/eeg/view";
 import { panForLaterality } from "@/lib/eeg/stereo";
 import type {
   Annotation,
@@ -92,6 +92,8 @@ export interface AppState {
   removeCustomPair: (i: number) => void;
   setCustomAB: (a: string, b: string) => void;
   setSensitivity: (n: number) => void;
+  nudgeSensitivity: (dir: -1 | 1) => void;
+  fitSensitivity: () => void;
   setNegativeUp: (v: boolean) => void;
   setAboutOpen: (v: boolean) => void;
   setKeysOpen: (v: boolean) => void;
@@ -255,7 +257,7 @@ export const useEegStore = create<AppState>((set, get) => {
     sonify: { ...DEFAULT_SONIFY },
     combine: "stereo",
     negativeUp: true,
-    sensitivityUv: 150,
+    sensitivityUv: DEFAULT_SENSITIVITY_UV,
     segment: null,
     mix: null,
     wavUrl: null,
@@ -442,7 +444,15 @@ export const useEegStore = create<AppState>((set, get) => {
     },
 
     setCustomAB: (a, b) => set({ customA: a, customB: b }),
-    setSensitivity: (n) => set({ sensitivityUv: n }),
+    setSensitivity: (n) => set({ sensitivityUv: clampSensitivity(n) }),
+    nudgeSensitivity: (dir) => set({ sensitivityUv: stepSensitivity(get().sensitivityUv, dir) }),
+    fitSensitivity: () => {
+      const { segment, viewStart, viewDuration } = get();
+      if (!segment) return;
+      set({
+        sensitivityUv: fitSensitivityUv(segment.tracks, viewStart, viewStart + viewDuration),
+      });
+    },
     setNegativeUp: (v) => {
       set({ negativeUp: v });
       playback.setSettings(get().sonify, v);

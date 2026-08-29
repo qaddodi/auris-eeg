@@ -33,7 +33,51 @@ export const TIME_SCALE_PRESETS = [1, 2, 4] as const;
 export const VIEW_PRESETS = [2, 5, 10, 15, 30, 60] as const;
 export const PAGE_PRESETS = [10, 15, 30] as const;
 export const DURATION_PRESETS = VIEW_PRESETS;
-export const SENSITIVITY_PRESETS = [50, 70, 100, 150, 200, 300] as const;
+export const SENSITIVITY_PRESETS = [15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 1000, 2000] as const;
+export const MIN_SENSITIVITY_UV = 10;
+export const MAX_SENSITIVITY_UV = 2000;
+export const DEFAULT_SENSITIVITY_UV = 70;
+/** Fraction of a channel lane filled by `sensitivityUv` peak-to-peak. */
+export const LANE_FILL = 0.92;
+
+export function clampSensitivity(n: number): number {
+  if (!Number.isFinite(n)) return DEFAULT_SENSITIVITY_UV;
+  return Math.min(MAX_SENSITIVITY_UV, Math.max(MIN_SENSITIVITY_UV, Math.round(n)));
+}
+
+/** dir −1 = more sensitive (bigger waves); +1 = less sensitive. */
+export function stepSensitivity(current: number, dir: -1 | 1): number {
+  const cur = clampSensitivity(current);
+  if (dir < 0) {
+    for (let i = SENSITIVITY_PRESETS.length - 1; i >= 0; i--) {
+      if (SENSITIVITY_PRESETS[i]! < cur) return SENSITIVITY_PRESETS[i]!;
+    }
+    return SENSITIVITY_PRESETS[0]!;
+  }
+  for (const v of SENSITIVITY_PRESETS) {
+    if (v > cur) return v;
+  }
+  return SENSITIVITY_PRESETS[SENSITIVITY_PRESETS.length - 1]!;
+}
+
+export function snapSensitivity(n: number): number {
+  const c = clampSensitivity(n);
+  let best: number = SENSITIVITY_PRESETS[0]!;
+  let bestD = Math.abs(best - c);
+  for (const p of SENSITIVITY_PRESETS) {
+    const d = Math.abs(p - c);
+    if (d < bestD) {
+      best = p;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+export function voltagePxPerUv(laneH: number, sensitivityUv: number): number {
+  return (laneH * LANE_FILL) / Math.max(MIN_SENSITIVITY_UV, sensitivityUv);
+}
+
 export const LFF_PRESETS = [0, 0.5, 1, 1.6, 5] as const;
 export const HFF_PRESETS = [0, 15, 35, 70, 100] as const;
 export const ROOT_NOTES: { midi: number; label: string }[] = [
