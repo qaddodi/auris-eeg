@@ -96,7 +96,7 @@ export function ControlPanel() {
               size="sm"
               variant="secondary"
               onClick={async () => {
-                const res = await fetch("/sample.edf");
+                const res = await fetch(`${import.meta.env.BASE_URL}sample.edf`);
                 if (!res.ok) return;
                 const buf = await res.arrayBuffer();
                 await loadFile(buf, "demo-deidentified.edf");

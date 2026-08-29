@@ -136,7 +136,7 @@ export class MixerEngine {
     if (this.ctx.state === "suspended") await this.ctx.resume();
     if (!this.ready) {
       this.ready = this.ctx.audioWorklet
-        .addModule("/contour-worklet.js?v=pen-dsa")
+        .addModule(`${import.meta.env.BASE_URL}contour-worklet.js?v=pen-dsa`)
         .then(() => {
           if (!this.ctx) return;
           this.node = new AudioWorkletNode(this.ctx, "contour-synth", {

@@ -26,7 +26,7 @@ export function Workstation() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/sample.edf");
+        const res = await fetch(`${import.meta.env.BASE_URL}sample.edf`);
         if (!res.ok || cancelled) return;
         const buf = await res.arrayBuffer();
         if (cancelled) return;
