@@ -25,7 +25,9 @@ export const DEFAULT_SONIFY: SonifySettings = {
   rootMidi: 50,
   rangeSemitones: 8,
   quantize: true,
-  volume: 1.45,
+  // Internal master safety gain. User-facing volume controls are intentionally
+  // omitted so playback starts at a consistent, conservative level.
+  volume: 0.88,
 };
 
 export const COMPRESSION_PRESETS = [20, 50, 100, 200] as const;
@@ -33,7 +35,9 @@ export const TIME_SCALE_PRESETS = [1, 2, 4] as const;
 export const VIEW_PRESETS = [2, 5, 10, 15, 30, 60] as const;
 export const PAGE_PRESETS = [10, 15, 30] as const;
 export const DURATION_PRESETS = VIEW_PRESETS;
-export const SENSITIVITY_PRESETS = [15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 1000, 2000] as const;
+export const SENSITIVITY_PRESETS = [
+  15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 1000, 2000,
+] as const;
 export const MIN_SENSITIVITY_UV = 10;
 export const MAX_SENSITIVITY_UV = 2000;
 export const DEFAULT_SENSITIVITY_UV = 70;

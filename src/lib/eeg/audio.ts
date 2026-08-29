@@ -3,9 +3,24 @@ import { mixToStereo } from "./stereo.ts";
 import { hasNan, peakAbs, percentileAbs } from "./preprocessing.ts";
 import { SCALE_DEGREES } from "./musify.ts";
 import { renderContour, settingsToOpts } from "./contour.ts";
+import { mixSonify } from "./sonify.ts";
+import { SCRUB_GRAIN_SECONDS, SCRUB_THROTTLE_MS, scrubPreviewTime } from "./scrub.ts";
 
 function writeString(view: DataView, offset: number, s: string) {
   for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+}
+
+function interpolateControl(samples: Float32Array, index: number): number {
+  if (samples.length === 0) return 0;
+  if (index <= 0) return samples[0]!;
+  if (index >= samples.length - 1) return samples[samples.length - 1]!;
+  const i = Math.floor(index);
+  const f = index - i;
+  return samples[i]! * (1 - f) + samples[i + 1]! * f;
+}
+
+function trackScale(samples: Float32Array): number {
+  return 1 / Math.max(1e-6, percentileAbs(samples, 0.995));
 }
 
 export function encodeWav(mix: MixResult, bitDepth: 16 | 24 = 16): Blob {
@@ -108,6 +123,7 @@ export function mixdownTracks(
 }
 
 type Param = { id: string; pan: number; gain: number; mute: boolean; solo: boolean };
+type ScrubRequest = { eegTime: number; velocity: number };
 
 /**
  * Realtime contour player. Mute/solo/gain/pan are messages to the worklet —
@@ -130,6 +146,12 @@ export class MixerEngine {
   private controls: ControlTrack[] = [];
   private sonify: SonifySettings | null = null;
   private negativeUp = true;
+  private scrubSource: AudioBufferSourceNode | null = null;
+  private scrubGain: GainNode | null = null;
+  private scrubPending: ScrubRequest | null = null;
+  private scrubTimer: ReturnType<typeof setTimeout> | null = null;
+  private scrubActive = false;
+  private lastScrubMs = 0;
 
   async ensure(): Promise<AudioContext> {
     if (!this.ctx) this.ctx = new AudioContext();
@@ -224,7 +246,14 @@ export class MixerEngine {
     const s = this.sonify;
     if (!s || !this.node) return;
     if (this.lp) {
-      this.lp.frequency.value = s.mode === "pen" ? 4200 : s.mode === "piano" ? 2800 : s.mode === "choir" ? 2200 : 2400;
+      this.lp.frequency.value =
+        s.mode === "pen"
+          ? 4200
+          : s.mode === "piano"
+            ? 2800
+            : s.mode === "choir" || s.mode === "ambient"
+              ? 2200
+              : 2400;
     }
     this.node.port.postMessage({
       type: "settings",
@@ -235,7 +264,7 @@ export class MixerEngine {
       quantize: s.quantize,
       degrees: SCALE_DEGREES[s.scale],
       mode: s.mode,
-      volume: s.volume ?? 1.45,
+      volume: s.volume ?? 0.88,
     });
   }
 
@@ -287,6 +316,7 @@ export class MixerEngine {
   }
 
   stop() {
+    this.endScrub();
     this.node?.port.postMessage({ type: "pause" });
     this.node?.port.postMessage({ type: "seek", eegTime: 0 });
     this.playing = false;
@@ -304,13 +334,172 @@ export class MixerEngine {
     }
   }
 
+  /** Play a short, rate-limited preview grain under the pointer during a scrub. */
+  scrubAt(eegTime: number, velocity = 0) {
+    this.scrubActive = true;
+    this.scrubPending = { eegTime: Math.max(0, Math.min(this.eegDur, eegTime)), velocity };
+    const now = typeof performance === "undefined" ? 0 : performance.now();
+    const wait = Math.max(0, SCRUB_THROTTLE_MS - (now - this.lastScrubMs));
+    if (wait > 0) {
+      if (!this.scrubTimer) {
+        this.scrubTimer = setTimeout(() => {
+          this.scrubTimer = null;
+          this.flushScrub();
+        }, wait);
+      }
+      return;
+    }
+    this.flushScrub();
+  }
+
+  endScrub() {
+    this.scrubActive = false;
+    this.scrubPending = null;
+    if (this.scrubTimer) clearTimeout(this.scrubTimer);
+    this.scrubTimer = null;
+    const ctx = this.ctx;
+    const source = this.scrubSource;
+    const gain = this.scrubGain;
+    this.scrubSource = null;
+    this.scrubGain = null;
+    if (!ctx || !source || !gain) return;
+    const at = ctx.currentTime;
+    gain.gain.cancelScheduledValues(at);
+    gain.gain.setTargetAtTime(0, at, 0.006);
+    try {
+      source.stop(at + 0.035);
+    } catch {
+      /* already stopped */
+    }
+  }
+
+  private flushScrub() {
+    if (!this.scrubActive || !this.scrubPending) return;
+    const request = this.scrubPending;
+    this.scrubPending = null;
+    this.lastScrubMs = typeof performance === "undefined" ? 0 : performance.now();
+    void this.ensure().then((ctx) => {
+      if (!this.scrubActive || !this.master) return;
+      this.renderScrub(ctx, request);
+    });
+  }
+
+  private renderScrub(ctx: AudioContext, request: ScrubRequest) {
+    const active = this.controls.filter((track) => {
+      if (track.mute || track.voltage.length === 0) return false;
+      return !this.controls.some((other) => other.solo) || track.solo;
+    });
+    if (active.length === 0) return;
+
+    const seconds = SCRUB_GRAIN_SECONDS;
+    const n = Math.max(256, Math.round(ctx.sampleRate * seconds));
+    const buffer = ctx.createBuffer(2, n, ctx.sampleRate);
+    const left = buffer.getChannelData(0);
+    const right = buffer.getChannelData(1);
+    const settings = this.sonify;
+    const scale = settings?.rangeSemitones ?? 8;
+    const rootHz = 440 * 2 ** (((settings?.rootMidi ?? 50) - 69) / 12);
+    const phases = active.slice(0, 6).map(() => 0);
+    for (let i = 0; i < n; i++) {
+      const progress = i / Math.max(1, n - 1);
+      const eegT = scrubPreviewTime(
+        request.eegTime,
+        request.velocity,
+        progress,
+        this.timeScale,
+        this.eegDur,
+      );
+      const fade = Math.sin(Math.PI * progress);
+      let l = 0;
+      let r = 0;
+      active.slice(0, 6).forEach((track, index) => {
+        const raw = interpolateControl(track.voltage, eegT * track.sampleRate);
+        const vn = Math.max(-1, Math.min(1, raw * trackScale(track.voltage)));
+        const hz =
+          settings?.mode === "direct"
+            ? 120 + Math.abs(vn) * 680
+            : rootHz * 2 ** ((vn * scale) / 12);
+        phases[index] =
+          (phases[index]! + (2 * Math.PI * Math.max(55, Math.min(1800, hz))) / ctx.sampleRate) %
+          (2 * Math.PI);
+        const energy = 0.035 + Math.min(0.16, Math.abs(vn) * 0.18);
+        const sample =
+          Math.sin(phases[index]!) * energy * (0.55 + 0.45 * Math.abs(vn)) * track.gain;
+        const pan = Math.max(-1, Math.min(1, track.pan));
+        l += sample * Math.cos(((pan + 1) * Math.PI) / 4);
+        r += sample * Math.sin(((pan + 1) * Math.PI) / 4);
+      });
+      left[i] = l * fade;
+      right[i] = r * fade;
+    }
+
+    this.endScrubSourceOnly();
+    const source = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    source.buffer = buffer;
+    source.connect(gain);
+    gain.connect(this.master!);
+    const at = ctx.currentTime + 0.004;
+    gain.gain.setValueAtTime(0, at);
+    gain.gain.linearRampToValueAtTime(0.72, at + 0.012);
+    gain.gain.setTargetAtTime(0, at + seconds * 0.72, 0.018);
+    source.start(at);
+    source.stop(at + seconds + 0.04);
+    this.scrubSource = source;
+    this.scrubGain = gain;
+    source.onended = () => {
+      if (this.scrubSource === source) {
+        this.scrubSource = null;
+        this.scrubGain = null;
+      }
+      gain.disconnect();
+    };
+  }
+
+  private endScrubSourceOnly() {
+    const source = this.scrubSource;
+    const gain = this.scrubGain;
+    this.scrubSource = null;
+    this.scrubGain = null;
+    if (!source || !gain || !this.ctx) return;
+    const at = this.ctx.currentTime;
+    gain.gain.cancelScheduledValues(at);
+    gain.gain.setTargetAtTime(0, at, 0.004);
+    try {
+      source.stop(at + 0.028);
+    } catch {
+      /* already stopped */
+    }
+  }
+
   setLoop(loop: boolean) {
     this.loop = loop;
   }
 
   bounceWav(negativeUp: boolean): MixResult | null {
     if (!this.sonify || this.controls.length === 0) return null;
-    return renderContour(this.controls, this.eegDur, settingsToOpts(this.sonify, negativeUp));
+    if (
+      this.sonify.mode !== "ambient" &&
+      this.sonify.mode !== "choir" &&
+      this.sonify.mode !== "piano"
+    ) {
+      return renderContour(this.controls, this.eegDur, settingsToOpts(this.sonify, negativeUp));
+    }
+    const anySolo = this.controls.some((track) => track.solo);
+    return mixSonify(
+      this.controls.map((track) => ({
+        id: track.id,
+        label: track.label,
+        samples: track.voltage,
+        sampleRate: track.sampleRate,
+        laterality: track.laterality,
+        kind: track.kind,
+        gain: track.gain,
+        audible: !track.mute && (!anySolo || track.solo),
+      })),
+      this.sonify,
+      "per-track",
+    );
   }
 
   /** @deprecated buffer API — kept so old mixdown tests still typecheck via mixdownTracks */

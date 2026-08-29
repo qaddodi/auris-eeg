@@ -29,6 +29,7 @@ export function Transport() {
   const follow = useEegStore((s) => s.followPlayhead);
   const mix = useEegStore((s) => s.mix);
   const segment = useEegStore((s) => s.segment);
+  const recording = useEegStore((s) => s.recording);
   const togglePlay = useEegStore((s) => s.togglePlay);
   const stop = useEegStore((s) => s.stop);
   const setLoop = useEegStore((s) => s.setLoop);
@@ -86,7 +87,7 @@ export function Transport() {
   const showingAll = total > 0 && viewDuration >= total - 1e-6;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-border bg-surface px-3 py-2">
+    <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2">
       <div className="flex items-center gap-1">
         <Button
           size="icon"
@@ -109,31 +110,32 @@ export function Transport() {
           <Repeat />
         </Button>
         <Button
-          size="icon"
+          size="sm"
           variant={follow ? "default" : "ghost"}
-          aria-label="Follow playhead"
+          aria-label={follow ? "Disable follow playhead" : "Enable follow playhead"}
+          aria-pressed={follow}
           title="Follow playhead (F)"
           onClick={() => setFollow(!follow)}
         >
-          <Scan />
+          <Scan /> <span className="hidden sm:inline">Follow</span>
         </Button>
       </div>
 
+      <div
+        className="hidden min-w-0 max-w-52 items-baseline gap-2 truncate border-l border-border pl-2 font-mono text-[0.6875rem] text-muted lg:flex"
+        title={recording?.name ?? "No recording loaded"}
+      >
+        <span className="truncate text-fg">{recording?.name ?? "No recording"}</span>
+        {segment && (
+          <span className="shrink-0 text-subtle">{segment.tracks[0]?.sampleRate ?? 0} Hz</span>
+        )}
+      </div>
+
       <div className="flex items-center gap-1">
-        <Button
-          size="icon"
-          variant="ghost"
-          aria-label="Zoom out"
-          onClick={() => zoomAt(1.25)}
-        >
+        <Button size="icon" variant="ghost" aria-label="Zoom out" onClick={() => zoomAt(1.25)}>
           <ZoomOut />
         </Button>
-        <Button
-          size="icon"
-          variant="ghost"
-          aria-label="Zoom in"
-          onClick={() => zoomAt(1 / 1.25)}
-        >
+        <Button size="icon" variant="ghost" aria-label="Zoom in" onClick={() => zoomAt(1 / 1.25)}>
           <ZoomIn />
         </Button>
         <div className="hidden items-center gap-1 md:flex">
@@ -157,7 +159,9 @@ export function Transport() {
             onClick={() => total && setViewDuration(total)}
             className={cn(
               "h-7 rounded-full px-2 text-[0.6875rem]",
-              showingAll ? "bg-accent text-accent-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
+              showingAll
+                ? "bg-accent text-accent-fg"
+                : "text-muted hover:bg-surface-2 hover:text-fg",
             )}
           >
             All
@@ -182,13 +186,24 @@ export function Transport() {
           />
         ))}
       </div>
-      <div className="hidden items-baseline gap-2 font-mono text-[0.6875rem] tabular-nums text-muted lg:flex">
+      <div
+        className="hidden items-baseline gap-2 rounded-sm bg-bg px-2 py-1 font-mono text-[0.6875rem] tabular-nums text-muted sm:flex"
+        title="Cursor readout at the EEG playhead"
+      >
         <span>
-          <span ref={hzRef} className="text-fg">—</span> Hz
+          <span ref={hzRef} className="text-fg">
+            —
+          </span>{" "}
+          Hz
         </span>
-        <span ref={bandRef} className="uppercase">—</span>
+        <span ref={bandRef} className="uppercase">
+          —
+        </span>
         <span>
-          <span ref={uvRef} className="text-fg">—</span> µV
+          <span ref={uvRef} className="text-fg">
+            —
+          </span>{" "}
+          µV
         </span>
         <span className="hidden xl:inline text-subtle">
           {BAND_LABELS.map((b) => b.glyph).join(" ")}
@@ -199,17 +214,28 @@ export function Transport() {
 
       <div className="flex items-baseline gap-3 font-mono text-xs tabular-nums text-muted">
         <span>
-          EEG <span ref={eegRef} className="text-fg">{formatTime(0, true)}</span>
+          EEG{" "}
+          <span ref={eegRef} className="text-fg">
+            {formatTime(0, true)}
+          </span>
         </span>
         <span className="hidden sm:inline">
           window <span className="text-fg">{viewDuration.toFixed(viewDuration < 10 ? 1 : 0)}s</span>
         </span>
         <span className="hidden sm:inline">
-          audio <span ref={audioRef} className="text-fg">{(mix?.duration ?? 0).toFixed(2)}s</span>
+          audio{" "}
+          <span ref={audioRef} className="text-fg">
+            {(mix?.duration ?? 0).toFixed(2)}s
+          </span>
         </span>
         <span>{factor}×</span>
       </div>
-      <Button size="icon" variant="ghost" aria-label="Keyboard shortcuts" onClick={() => setKeysOpen(true)}>
+      <Button
+        size="icon"
+        variant="ghost"
+        aria-label="Keyboard shortcuts"
+        onClick={() => setKeysOpen(true)}
+      >
         <Keyboard />
       </Button>
       <Button size="sm" variant="secondary" disabled={!segment} onClick={download}>

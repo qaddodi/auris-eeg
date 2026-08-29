@@ -66,13 +66,20 @@ export function Workstation() {
         <p className="hidden max-w-xl truncate text-xs text-subtle md:block">
           Educational aid — not a medical device. No seizure detection. Processing is local.
         </p>
-        <Button size="icon" variant="ghost" aria-label="Keyboard shortcuts" onClick={() => setKeysOpen(true)}>
+        <Button
+          size="icon"
+          variant="ghost"
+          aria-label="Keyboard shortcuts"
+          onClick={() => setKeysOpen(true)}
+        >
           <Keyboard />
         </Button>
         <Button size="icon" variant="ghost" aria-label="About" onClick={() => setAboutOpen(true)}>
           <Info />
         </Button>
       </header>
+
+      <Transport />
 
       <div className="relative flex min-h-0 flex-1">
         <div
@@ -89,7 +96,6 @@ export function Workstation() {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <ReviewBar />
           <WaveformView />
-          <Transport />
         </div>
       </div>
 
@@ -97,16 +103,17 @@ export function Workstation() {
         <Modal title="About Auris" onClose={() => setAboutOpen(false)}>
           <div className="space-y-3 text-pretty text-sm leading-relaxed text-muted">
             <p>
-              Auris is a local EEG review + listening station. Contour maps the tracing
-              itself: a deflection up on the graph raises pitch. Pen mode (Norata 2023)
-              is the analog paper scratch — pen speed is |dV/dt|, so spikes hiss and
-              isoelectric baseline is almost silent. Choir uses just-intonation partials
-              with 1/f loudness (Wu 2009 scale-free brain-wave music). Piano keeps a
-              scale while the field looks ordinary and leaves it when it does not —
-              educational, not a diagnosis. Traces color by instantaneous frequency
-              (Δ θ α β γ). The DSA strip is a left/right compressed spectral array.
-              Suggested markers are educational — not a diagnosis. Mute and solo are
-              live. Nothing leaves this browser.
+              Auris is a local EEG review + listening station. Contour maps the tracing itself: a
+              deflection up on the graph raises pitch. Pen mode (Norata 2023) is the analog paper
+              scratch — pen speed is |dV/dt|, so spikes hiss and isoelectric baseline is almost
+              silent. Choir uses just-intonation partials with 1/f loudness (Wu 2009 scale-free
+              brain-wave music). Piano keeps a scale while the field looks ordinary and leaves it
+              when it does not — educational, not a diagnosis. Ambient maps smoothed delta, theta,
+              alpha, and beta power to a restrained harmonic choir; Piano uses a scale with
+              rate-limited transient accents. Trace colors come from stable channel identity, not
+              zoom or signal density. The DSA strip is a left/right power spectral density view with
+              a fixed robust dB scale. Suggested markers are educational — not a diagnosis. Audible
+              scrubbing previews a short grain under the pointer. Nothing leaves this browser.
             </p>
             <p>
               The strip at the top is the entire recording. The highlighted window is what the
@@ -136,7 +143,10 @@ export function Workstation() {
                 </p>
                 <ul className="space-y-1.5">
                   {SHORTCUTS.filter((k) => k.group === group).map((k) => (
-                    <li key={`${group}-${k.action}`} className="flex items-baseline justify-between gap-3 text-sm">
+                    <li
+                      key={`${group}-${k.action}`}
+                      className="flex items-baseline justify-between gap-3 text-sm"
+                    >
                       <span className="text-muted">{k.action}</span>
                       <span className="flex shrink-0 gap-1">
                         {k.keys.map((key) => (

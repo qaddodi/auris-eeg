@@ -95,7 +95,7 @@ export function mixerTracksFrom(
   settings: SonifySettings,
   combine: CombineMode,
 ): MixerTrack[] {
-  const musical = settings.mode === "choir";
+  const musical = settings.mode === "choir" || settings.mode === "ambient";
   if (musical) {
     const mix = mixProcessed(processed, trackState, settings, combine);
     if (mix.left.length === 0) return [];
@@ -222,8 +222,8 @@ export function buildRepro(opts: {
   const method =
     opts.settings.mode === "direct"
       ? "direct time compression of the waveform"
-      : opts.settings.mode === "choir"
-        ? `just-intonation 1/f choir (${opts.settings.scale})`
+      : opts.settings.mode === "choir" || opts.settings.mode === "ambient"
+        ? `harmonic EEG band choir (${opts.settings.scale})`
         : opts.settings.mode === "pulse"
           ? "pulse (amplitude follows |wave|)"
           : opts.settings.mode === "piano"

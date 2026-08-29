@@ -46,7 +46,7 @@ export interface ContourOpts {
   quantize: boolean;
   negativeUp: boolean;
   outputRate: number;
-  mode: "contour" | "choir" | "pulse" | "direct" | "piano" | "pen";
+  mode: "contour" | "ambient" | "choir" | "pulse" | "direct" | "piano" | "pen";
 }
 
 export function settingsToOpts(s: SonifySettings, negativeUp: boolean): ContourOpts {
@@ -144,7 +144,13 @@ export function renderContour(
         let targetHz: number;
         if (opts.mode === "pulse") targetHz = midiToHz(opts.rootMidi - 12);
         else {
-          const midi = voltageToMidi(vn, opts.rootMidi, opts.rangeSemitones, opts.negativeUp, degrees);
+          const midi = voltageToMidi(
+            vn,
+            opts.rootMidi,
+            opts.rangeSemitones,
+            opts.negativeUp,
+            degrees,
+          );
           targetHz = midiToHz(midi);
         }
         hzS[v] = hzS[v]! + 0.08 * (targetHz - hzS[v]!);
@@ -162,7 +168,8 @@ export function renderContour(
         const dt = eegT - spikes[si]!;
         if (dt >= 0 && dt < 0.045) {
           const env = Math.exp(-dt * 55);
-          const tap = Math.sin(2 * Math.PI * 168 * (i / opts.outputRate)) * env * spikeGain * tr.gain;
+          const tap =
+            Math.sin(2 * Math.PI * 168 * (i / opts.outputRate)) * env * spikeGain * tr.gain;
           l += tap * gL;
           r += tap * gR;
         }

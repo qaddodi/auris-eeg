@@ -9,9 +9,6 @@ export function EventList() {
   const annotations = useEegStore((s) => s.annotations);
   const selected = useEegStore((s) => s.selectedAnnotation);
   const showAuto = useEegStore((s) => s.showAuto);
-  const setShowAuto = useEegStore((s) => s.setShowAuto);
-  const showAnnotations = useEegStore((s) => s.showAnnotations);
-  const setShowAnnotations = useEegStore((s) => s.setShowAnnotations);
   const selectAnnotation = useEegStore((s) => s.selectAnnotation);
   const removeAnnotation = useEegStore((s) => s.removeAnnotation);
   const pendingType = useEegStore((s) => s.pendingType);
@@ -20,7 +17,7 @@ export function EventList() {
   const exportAnnotations = useEegStore((s) => s.exportAnnotations);
   const segment = useEegStore((s) => s.segment);
 
-  const visible = annotations.filter((a) => showAuto || a.source === "user" || a.source === "file");
+  const visible = annotations.filter((a) => a.source !== "auto" || (showAuto && a.type !== "qrs"));
 
   return (
     <div className="space-y-2">
@@ -47,48 +44,46 @@ export function EventList() {
           </button>
         ))}
       </div>
-      <label className="flex items-center justify-between text-xs text-muted">
-        Show annotations
-        <input
-          type="checkbox"
-          checked={showAnnotations}
-          onChange={(e) => setShowAnnotations(e.target.checked)}
-          className="size-3.5 accent-accent"
-        />
-      </label>
-      <label className="flex items-center justify-between text-xs text-muted">
-        Show suggested
-        <input
-          type="checkbox"
-          checked={showAuto}
-          onChange={(e) => setShowAuto(e.target.checked)}
-          className="size-3.5 accent-accent"
-        />
-      </label>
-      <ul className="max-h-48 space-y-0.5 overflow-auto">
+      <ul className="max-h-48 space-y-0.5 overflow-auto" aria-label="Review markers">
         {visible.length === 0 && <li className="text-xs text-subtle">No markers yet.</li>}
         {visible.map((a) => (
           <li key={a.id}>
             <button
               type="button"
               onClick={() => selectAnnotation(a.id)}
-              className={`flex w-full items-center gap-2 rounded-sm px-1 py-0.5 text-left text-[0.6875rem] ${
-                selected === a.id ? "bg-surface-2" : "hover:bg-bg"
+              className={`flex w-full items-center gap-2 rounded-sm border-l-2 px-1 py-1 text-left text-[0.6875rem] ${
+                selected === a.id
+                  ? "border-accent bg-surface-2"
+                  : a.source === "auto"
+                    ? "border-warn/70 border-dashed hover:bg-bg"
+                    : "border-transparent hover:bg-bg"
               }`}
             >
-              <span className="size-2 shrink-0 rounded-full" style={{ background: MORPH_COLOR[a.type] }} />
-              <span className="w-12 shrink-0 font-mono tabular-nums text-muted">{formatTime(a.start)}</span>
+              <span
+                className="size-2 shrink-0 rounded-full"
+                style={{ background: MORPH_COLOR[a.type] }}
+              />
+              <span className="w-12 shrink-0 font-mono tabular-nums text-muted">
+                {formatTime(a.start)}
+              </span>
               <span className="min-w-0 flex-1 truncate text-fg">
                 {ANNOTATION_TYPES.find((t) => t.id === a.type)?.label ?? a.type}
                 {a.text ? ` · ${a.text}` : ""}
               </span>
-              <span className="text-[0.625rem] uppercase text-subtle">{a.source === "auto" ? "sug" : a.source}</span>
+              <span className="text-[0.625rem] uppercase text-subtle">
+                {a.source === "auto" ? "sug" : a.source}
+              </span>
             </button>
           </li>
         ))}
       </ul>
       <div className="flex gap-1">
-        <Button size="sm" variant="secondary" onClick={exportAnnotations} disabled={!annotations.length}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={exportAnnotations}
+          disabled={!annotations.length}
+        >
           Export JSON
         </Button>
         {selected && (

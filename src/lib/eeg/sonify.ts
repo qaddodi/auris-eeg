@@ -1,4 +1,11 @@
-import { fadeEdges, hasNan, peakAbs, percentileAbs, robustNormalize, softLimit } from "./preprocessing.ts";
+import {
+  fadeEdges,
+  hasNan,
+  peakAbs,
+  percentileAbs,
+  robustNormalize,
+  softLimit,
+} from "./preprocessing.ts";
 import { choirVoice, ekgVoice, eogVoice, scaleVoice, timeScaleFor } from "./musify.ts";
 import { averageChannels, mixToStereo, panForLaterality } from "./stereo.ts";
 import type { ChannelKind, Laterality, MixResult, SonifySettings } from "./types.ts";
@@ -74,7 +81,8 @@ export function sonifyTrack(
 ): Float32Array {
   if (kind === "ekg") return ekgVoice(eeg, eegRate, settings);
   if (kind === "eog" || kind === "emg") return eogVoice(eeg, eegRate, settings);
-  if (settings.mode === "choir") return choirVoice(eeg, eegRate, settings);
+  if (settings.mode === "choir" || settings.mode === "ambient")
+    return choirVoice(eeg, eegRate, settings);
   if (
     settings.mode === "contour" ||
     settings.mode === "pulse" ||
@@ -157,7 +165,10 @@ export function mixSonify(
 
   const eegDur = audible[0]!.samples.length / audible[0]!.sampleRate;
   const musical =
-    settings.mode === "choir" || settings.mode === "piano" || settings.mode === "pen";
+    settings.mode === "choir" ||
+    settings.mode === "ambient" ||
+    settings.mode === "piano" ||
+    settings.mode === "pen";
   const voices = musical ? groupForMusify(audible) : audible;
 
   let mixed: { left: Float32Array; right: Float32Array };
@@ -207,7 +218,8 @@ export function expectedAudioHz(eegHz: number, compression: number): number {
 export function describeMapping(compression: number): string {
   const alpha = expectedAudioHz(10, compression);
   const delta = expectedAudioHz(3, compression);
-  const fmt = (hz: number) => (hz >= 1000 ? `${(hz / 1000).toFixed(2)} kHz` : `${hz.toFixed(0)} Hz`);
+  const fmt = (hz: number) =>
+    hz >= 1000 ? `${(hz / 1000).toFixed(2)} kHz` : `${hz.toFixed(0)} Hz`;
   return `10 Hz alpha → ${fmt(alpha)}; 3 Hz delta → ${fmt(delta)}`;
 }
 

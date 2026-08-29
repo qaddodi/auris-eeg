@@ -2,7 +2,13 @@
 
 import { create } from "zustand";
 import { encodeWav, playback } from "@/lib/eeg/audio";
-import { DEFAULT_FILTERS, DEFAULT_SONIFY, clampSensitivity, DEFAULT_SENSITIVITY_UV, stepSensitivity } from "@/lib/eeg/defaults";
+import {
+  DEFAULT_FILTERS,
+  DEFAULT_SONIFY,
+  clampSensitivity,
+  DEFAULT_SENSITIVITY_UV,
+  stepSensitivity,
+} from "@/lib/eeg/defaults";
 import { loadRecording } from "@/lib/eeg/edf";
 import {
   audibleIds,
@@ -13,11 +19,16 @@ import {
 } from "@/lib/eeg/pipeline";
 import { detectMorphologies, spikesForTrack } from "@/lib/eeg/patterns";
 import { buildDsa } from "@/lib/eeg/spectrum";
-import { clampView, DEFAULT_VIEW_SEC, fitSensitivityUv, followViewStart, zoomView } from "@/lib/eeg/view";
+import {
+  clampView,
+  DEFAULT_VIEW_SEC,
+  fitSensitivityUv,
+  followViewStart,
+  zoomView,
+} from "@/lib/eeg/view";
 import { panForLaterality } from "@/lib/eeg/stereo";
 import type {
   Annotation,
-  ColorMode,
   CombineMode,
   Derivation,
   FilterSettings,
@@ -71,9 +82,9 @@ export interface AppState {
   showAnnotations: boolean;
   tool: "pointer" | "annotate" | "caliper";
   pendingType: MorphologyType;
-  colorBy: ColorMode;
   showDsa: boolean;
   dsa: DsaFrame | null;
+  audibleScrub: boolean;
 
   loadFile: (file: File | ArrayBuffer, name: string) => Promise<void>;
   setMontage: (m: MontageKind) => void;
@@ -117,8 +128,8 @@ export interface AppState {
   setTool: (t: AppState["tool"]) => void;
   setPendingType: (t: MorphologyType) => void;
   exportAnnotations: () => void;
-  setColorBy: (m: ColorMode) => void;
   setShowDsa: (v: boolean) => void;
+  setAudibleScrub: (v: boolean) => void;
 }
 
 function defaultTrack(id: string, kind?: string): TrackState {
@@ -219,8 +230,14 @@ export const useEegStore = create<AppState>((set, get) => {
     if (!recording) return;
     const total = recording.header.duration;
     const seg = processSegment(recording, 0, total, derivations, filters);
-    const view = clampView(viewStart, viewDuration || Math.min(DEFAULT_VIEW_SEC, total), seg.duration);
-    const auto = detectMorphologies(seg.tracks);
+    const view = clampView(
+      viewStart,
+      viewDuration || Math.min(DEFAULT_VIEW_SEC, total),
+      seg.duration,
+    );
+    // EKG remains available as a trace and manual annotation target, but its
+    // heartbeat morphology is intentionally not surfaced as an auto suggestion.
+    const auto = detectMorphologies(seg.tracks).filter((a) => a.type !== "qrs");
     const fromFile: Annotation[] = recording.annotations.map((a) => ({
       id: nid(),
       start: a.onset,
@@ -276,12 +293,19 @@ export const useEegStore = create<AppState>((set, get) => {
     showAnnotations: true,
     tool: "pointer",
     pendingType: "comment",
-    colorBy: "band",
     showDsa: true,
     dsa: null,
+    audibleScrub: false,
 
     loadFile: async (file, name) => {
-      set({ status: "loading", error: null, playing: false, busy: true, annotations: [], dsa: null });
+      set({
+        status: "loading",
+        error: null,
+        playing: false,
+        busy: true,
+        annotations: [],
+        dsa: null,
+      });
       playback.stop();
       await new Promise((r) => setTimeout(r, 16));
       try {
@@ -459,8 +483,8 @@ export const useEegStore = create<AppState>((set, get) => {
     },
     setAboutOpen: (v) => set({ aboutOpen: v }),
     setKeysOpen: (v) => set({ keysOpen: v }),
-    setColorBy: (m) => set({ colorBy: m }),
     setShowDsa: (v) => set({ showDsa: v }),
+    setAudibleScrub: (v) => set({ audibleScrub: v }),
 
     seekEeg: (t) => {
       const { segment } = get();
@@ -530,7 +554,11 @@ export const useEegStore = create<AppState>((set, get) => {
       const a = anchor ?? t;
       let next = zoomView(viewStart, viewDuration, segment.duration, factor, a);
       if (followPlayhead) {
-        next = clampView(followViewStart(t, next.duration, segment.duration), next.duration, segment.duration);
+        next = clampView(
+          followViewStart(t, next.duration, segment.duration),
+          next.duration,
+          segment.duration,
+        );
       }
       set({ viewStart: next.start, viewDuration: next.duration });
     },
@@ -569,7 +597,10 @@ export const useEegStore = create<AppState>((set, get) => {
       const { segment, viewDuration } = get();
       if (v && segment) {
         const t = eegNow(get());
-        set({ followPlayhead: true, viewStart: followViewStart(t, viewDuration, segment.duration) });
+        set({
+          followPlayhead: true,
+          viewStart: followViewStart(t, viewDuration, segment.duration),
+        });
       } else {
         liveViewCommit();
         set({ followPlayhead: false });
@@ -593,7 +624,11 @@ export const useEegStore = create<AppState>((set, get) => {
 
     addAnnotation: (a) => {
       const item: Annotation = { ...a, id: nid() };
-      set({ annotations: [...get().annotations, item], selectedAnnotation: item.id, tool: "pointer" });
+      set({
+        annotations: [...get().annotations, item],
+        selectedAnnotation: item.id,
+        tool: "pointer",
+      });
     },
 
     removeAnnotation: (id) => {

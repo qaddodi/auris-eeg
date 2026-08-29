@@ -1,6 +1,6 @@
 /* Warm EEG listener.
    Contour: graph-up → pitch up. Pulse: count the rhythm.
-   Choir: just-intonation 1/f (1 : 5/4 : 3/2 : 2) for delta/theta/alpha/beta.
+   Ambient/Choir: just-intonation 1/f (1 : 5/4 : 3/2 : 2) for delta/theta/alpha/beta.
    Piano (experimental): in-scale piano while the field looks ordinary; spikes clang a
    tritone, slowing goes flat, muscle adds grit.
    Pen: analog paper scratch — |dV/dt| is the pen speed (Norata 2023).
@@ -18,7 +18,7 @@ class ContourProcessor extends AudioWorkletProcessor {
     this.degrees = [0, 3, 5, 7, 10];
     this.quantize = 0;
     this.mode = "contour";
-    this.volume = 1.45;
+    this.volume = 0.88;
     this.audioStart = 0;
     this.eegStart = 0;
     this.eegDuration = 0;
@@ -52,6 +52,7 @@ class ContourProcessor extends AudioWorkletProcessor {
       lastMidi: 50,
       grit: 0,
       prevVn: 0,
+      noteCooldown: 0,
     };
   }
 
@@ -118,6 +119,7 @@ class ContourProcessor extends AudioWorkletProcessor {
         lastMidi: this.root,
         grit: 0,
         prevVn: 0,
+        noteCooldown: 0,
       }));
     } else if (msg.type === "params") {
       const map = {};
@@ -138,7 +140,7 @@ class ContourProcessor extends AudioWorkletProcessor {
       this.quantize = msg.quantize ? 1 : 0;
       this.degrees = msg.degrees || [0, 3, 5, 7, 10];
       this.mode = msg.mode || "contour";
-      this.volume = Math.max(0.05, Math.min(2.5, msg.volume == null ? 1.45 : msg.volume));
+      this.volume = Math.max(0.05, Math.min(2.5, msg.volume == null ? 0.88 : msg.volume));
     } else if (msg.type === "play") {
       this.playing = true;
       this.eegStart = msg.eegTime || 0;
@@ -195,6 +197,7 @@ class ContourProcessor extends AudioWorkletProcessor {
   }
 
   pianoVoice(vn, state, pan, gain, vg, sr, detune, spikeEnv) {
+    state.noteCooldown = Math.max(0, (state.noteCooldown || 0) - 1 / sr);
     const signed = this.negativeUp ? vn : -vn;
     const aFast = 1 - Math.exp(-this.timeScale / (sr * 0.01));
     const aSlow = 1 - Math.exp(-this.timeScale / (sr * 0.09));
@@ -214,9 +217,12 @@ class ContourProcessor extends AudioWorkletProcessor {
     else if (kind === "slow") midi -= 0.7;
     else if (kind === "grit") midi += 0.35;
 
-    if (Math.abs(midi - state.lastMidi) > 0.45 || spikeEnv > 0.55) {
+    if (state.noteCooldown <= 0 && (Math.abs(midi - state.lastMidi) > 0.45 || spikeEnv > 0.55)) {
       state.hammer = 1;
       state.lastMidi = midi;
+      // Hysteresis plus a minimum note duration keeps piano gestures musical
+      // instead of retriggering on every noisy sample.
+      state.noteCooldown = spikeEnv > 0.55 ? 0.16 : 0.11;
     }
     state.hammer *= Math.exp(-1 / (0.085 * sr));
 
@@ -260,7 +266,9 @@ class ContourProcessor extends AudioWorkletProcessor {
     state.hz += 0.045 * (thz - state.hz);
     state.phase += (2 * Math.PI * state.hz) / sr;
     if (state.phase > 1e8) state.phase -= 2 * Math.PI * 8000;
-    this.noise = this.noise * 0.92 + (((Math.sin(state.phase * 12.9898 + vn * 78.23) * 43758.5453) % 1) + 1) * 0.04;
+    this.noise =
+      this.noise * 0.92 +
+      (((Math.sin(state.phase * 12.9898 + vn * 78.23) * 43758.5453) % 1) + 1) * 0.04;
     const paper = (this.noise * 2 - 1) * (0.3 + 0.7 * speed);
     const scratch = Math.sin(state.phase) * speed;
     const grain = Math.sin(state.phase * 3.17) * speed * 0.22;
@@ -283,8 +291,9 @@ class ContourProcessor extends AudioWorkletProcessor {
     const n = L.length;
     const sr = sampleRate;
     const piano = this.mode === "piano";
+    const ambient = this.mode === "ambient" || this.mode === "choir";
     const pen = this.mode === "pen";
-    const lpHz = pen ? 3400 : piano ? 2600 : this.mode === "direct" ? 1800 : this.mode === "choir" ? 1600 : 1100;
+    const lpHz = pen ? 3400 : piano ? 2600 : this.mode === "direct" ? 1800 : ambient ? 1600 : 1100;
     const lpA = 1 - Math.exp((-2 * Math.PI * lpHz) / sr);
     const a4 = 1 - Math.exp((-2 * Math.PI * 4) / sr);
     const a8 = 1 - Math.exp((-2 * Math.PI * 8) / sr);
@@ -361,7 +370,18 @@ class ContourProcessor extends AudioWorkletProcessor {
           }
           if (!useGroups && pitched) {
             const midiOff = t.pan < -0.25 ? 0 : t.pan > 0.25 ? 7 : 3;
-            const pair = this.voice(this.mode, vn, t, t.pan, 1, vg, sr, 1, this.root + midiOff, spikeEnv);
+            const pair = this.voice(
+              this.mode,
+              vn,
+              t,
+              t.pan,
+              1,
+              vg,
+              sr,
+              1,
+              this.root + midiOff,
+              spikeEnv,
+            );
             l += pair[0];
             r += pair[1];
           }
@@ -376,7 +396,7 @@ class ContourProcessor extends AudioWorkletProcessor {
         if (this.mode === "direct") {
           l += (gV[0] * 0.7 + gV[2] * 0.35) * 0.85;
           r += (gV[1] * 0.7 + gV[2] * 0.35) * 0.85;
-        } else if (this.mode === "choir") {
+        } else if (ambient) {
           const mix = (gV[0] + gV[1] + gV[2]) / Math.max(1, gLive[0] + gLive[1] + gLive[2]);
           this.bandLp[0] += a4 * (mix - this.bandLp[0]);
           this.bandLp[1] += a8 * (mix - this.bandLp[1]);
@@ -441,9 +461,14 @@ class ContourProcessor extends AudioWorkletProcessor {
             r += s * gR;
           } else {
             this.eogPhase += (2 * Math.PI * 148) / sr;
-            this.eogNoise = this.eogNoise * 0.97 + (((Math.sin(eegT * 9317) * 43758.5453) % 1) + 1) * 0.015;
+            this.eogNoise =
+              this.eogNoise * 0.97 + (((Math.sin(eegT * 9317) * 43758.5453) % 1) + 1) * 0.015;
             const s =
-              (0.7 * Math.sin(this.eogPhase) + 0.18 * (this.eogNoise * 2 - 1)) * t.amp * 0.5 * t.live * t.gain;
+              (0.7 * Math.sin(this.eogPhase) + 0.18 * (this.eogNoise * 2 - 1)) *
+              t.amp *
+              0.5 *
+              t.live *
+              t.gain;
             l += s * gL;
             r += s * gR;
           }

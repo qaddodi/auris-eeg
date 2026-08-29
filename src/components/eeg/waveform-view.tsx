@@ -3,7 +3,7 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { cn } from "@/lib/utils";
 import { audibleIds } from "@/lib/eeg/pipeline";
-import type { Annotation, ChannelKind, Laterality, ProcessedTrack, TrackState } from "@/lib/eeg/types";
+import type { Annotation, ProcessedTrack, TrackState } from "@/lib/eeg/types";
 import { playback } from "@/lib/eeg/audio";
 import {
   clamp,
@@ -13,40 +13,32 @@ import {
   samplesPerPixel,
   timeAtFraction,
 } from "@/lib/eeg/view";
-import { MORPH_COLOR, voltagePxPerUv } from "@/lib/eeg/defaults";
-import {
-  BAND_COLORS,
-  bandFromHz,
-  dsaRgb,
-  dsaUnit,
-  freqWindow,
-  type BandName,
-  type DsaFrame,
-} from "@/lib/eeg/spectrum";
+import { MORPH_COLOR } from "@/lib/eeg/defaults";
+import { displayScaleForChannel, ekgDisplayProfile, normalizeEkgWindow } from "@/lib/eeg/display";
+import { stableTraceColor } from "@/lib/eeg/colors";
+import { dsaRgb, dsaUnit, type DsaFrame } from "@/lib/eeg/spectrum";
 import { eegNow, useEegStore } from "@/store/eeg-store";
-
-const LAT_COLOR: Record<Laterality, string> = {
-  left: "#6ec8d9",
-  right: "#c4a574",
-  midline: "#c8ccd4",
-  unknown: "#8b919c",
-};
-
-const KIND_COLOR: Partial<Record<ChannelKind, string>> = {
-  ekg: "#e07a7a",
-  eog: "#d4b06a",
-  emg: "#b8a3d4",
-  extra: "#7a828c",
-};
 
 const GUTTER = 132;
 const RULER = 18;
 const OVERVIEW_H = 72;
-const DSA_H = 72;
+const DSA_H = 112;
+const DSA_LEFT = 34;
+const DSA_RIGHT = 82;
+const DSA_TOP = 14;
+const DSA_BOTTOM = 17;
 const EVENT_LANE = 18;
-const BAND_ORDER: BandName[] = ["delta", "theta", "alpha", "beta", "gamma"];
 /** Below this samples/pixel, min–max bars collapse — draw an interpolated polyline instead. */
 const MINMAX_SPP = 1.8;
+
+function traceWeight(samplesPerPixelValue: number, hovered: boolean): number {
+  // Dense envelope columns already carry visual mass. Taper the stroke as
+  // density rises so the full-recording page stays legible without making
+  // close-up traces feel faint.
+  const densityWeight =
+    samplesPerPixelValue <= MINMAX_SPP ? 1 : Math.max(0.42, Math.sqrt(1.15 / samplesPerPixelValue));
+  return densityWeight * (hovered ? 1.08 : 1);
+}
 
 function sizeCanvas(canvas: HTMLCanvasElement, cssW: number, cssH: number, dpr: number) {
   const w = Math.max(1, Math.floor(cssW * dpr));
@@ -66,11 +58,12 @@ function drawPolyline(
   mid: number,
   scale: number,
   sign: number,
+  offset = 0,
 ) {
   ctx.beginPath();
   for (let p = 0; p < y.length; p++) {
     const x = x0 + p + 0.5;
-    const yy = mid + sign * y[p]! * scale;
+    const yy = mid + sign * (y[p]! - offset) * scale;
     if (p === 0) ctx.moveTo(x, yy);
     else ctx.lineTo(x, yy);
   }
@@ -88,14 +81,16 @@ function drawLane(
   color: string,
   alpha: number,
   midV: Float32Array | null,
+  offset = 0,
+  weight = 1,
 ) {
   ctx.globalAlpha = alpha;
   ctx.strokeStyle = color;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   if (midV) {
-    ctx.lineWidth = 1.55;
-    drawPolyline(ctx, midV, x0, mid, scale, sign);
+    ctx.lineWidth = 1.35 * weight;
+    drawPolyline(ctx, midV, x0, mid, scale, sign, offset);
     ctx.globalAlpha = 1;
     return;
   }
@@ -104,29 +99,29 @@ function drawLane(
   ctx.beginPath();
   for (let p = 0; p < min.length; p++) {
     const x = x0 + p + 0.5;
-    const yHi = mid + sign * max[p]! * scale;
+    const yHi = mid + sign * (max[p]! - offset) * scale;
     if (p === 0) ctx.moveTo(x, yHi);
     else ctx.lineTo(x, yHi);
   }
   for (let p = min.length - 1; p >= 0; p--) {
-    ctx.lineTo(x0 + p + 0.5, mid + sign * min[p]! * scale);
+    ctx.lineTo(x0 + p + 0.5, mid + sign * (min[p]! - offset) * scale);
   }
   ctx.closePath();
   ctx.fill();
 
   ctx.globalAlpha = alpha;
-  ctx.lineWidth = 1.35;
+  ctx.lineWidth = 1.15 * weight;
   ctx.beginPath();
   for (let p = 0; p < min.length; p++) {
     const x = x0 + p + 0.5;
-    ctx.moveTo(x, mid + sign * min[p]! * scale);
-    ctx.lineTo(x, mid + sign * max[p]! * scale);
+    ctx.moveTo(x, mid + sign * (min[p]! - offset) * scale);
+    ctx.lineTo(x, mid + sign * (max[p]! - offset) * scale);
   }
   ctx.stroke();
   ctx.beginPath();
   for (let p = 0; p < min.length; p++) {
     const x = x0 + p + 0.5;
-    const y = mid + sign * max[p]! * scale;
+    const y = mid + sign * (max[p]! - offset) * scale;
     if (p === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   }
@@ -134,79 +129,11 @@ function drawLane(
   ctx.beginPath();
   for (let p = 0; p < min.length; p++) {
     const x = x0 + p + 0.5;
-    const y = mid + sign * min[p]! * scale;
+    const y = mid + sign * (min[p]! - offset) * scale;
     if (p === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   }
   ctx.stroke();
-  ctx.globalAlpha = 1;
-}
-
-function drawLaneBanded(
-  ctx: CanvasRenderingContext2D,
-  min: Float32Array,
-  max: Float32Array,
-  hz: Float32Array,
-  x0: number,
-  mid: number,
-  scale: number,
-  sign: number,
-  alpha: number,
-  midV: Float32Array | null,
-) {
-  ctx.lineJoin = "round";
-  ctx.lineCap = midV ? "round" : "butt";
-  ctx.lineWidth = midV ? 1.6 : 1.4;
-  ctx.globalAlpha = alpha;
-  if (midV) {
-    let band: BandName | null = null;
-    ctx.beginPath();
-    for (let p = 0; p < midV.length; p++) {
-      const next = bandFromHz(hz[p] ?? 0);
-      const x = x0 + p + 0.5;
-      const y = mid + sign * midV[p]! * scale;
-      if (next !== band) {
-        if (band) {
-          ctx.lineTo(x, y);
-          ctx.stroke();
-          ctx.beginPath();
-        }
-        ctx.strokeStyle = BAND_COLORS[next];
-        ctx.moveTo(x, y);
-        band = next;
-      } else {
-        ctx.lineTo(x, y);
-      }
-    }
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    return;
-  }
-  for (const b of BAND_ORDER) {
-    ctx.strokeStyle = BAND_COLORS[b];
-    ctx.beginPath();
-    for (let p = 0; p < min.length; p++) {
-      if (bandFromHz(hz[p] ?? 0) !== b) continue;
-      const x = x0 + p + 0.5;
-      ctx.moveTo(x, mid + sign * min[p]! * scale);
-      ctx.lineTo(x, mid + sign * max[p]! * scale);
-    }
-    ctx.stroke();
-  }
-  ctx.globalAlpha = alpha * 0.22;
-  ctx.beginPath();
-  for (let p = 0; p < min.length; p++) {
-    const x = x0 + p + 0.5;
-    const yHi = mid + sign * max[p]! * scale;
-    if (p === 0) ctx.moveTo(x, yHi);
-    else ctx.lineTo(x, yHi);
-  }
-  for (let p = min.length - 1; p >= 0; p--) {
-    ctx.lineTo(x0 + p + 0.5, mid + sign * min[p]! * scale);
-  }
-  ctx.closePath();
-  ctx.fillStyle = "#c8ccd4";
-  ctx.fill();
   ctx.globalAlpha = 1;
 }
 
@@ -242,8 +169,20 @@ export function WaveformView() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const overviewWrapRef = useRef<HTMLDivElement>(null);
   const dsaWrapRef = useRef<HTMLDivElement>(null);
+  const hoveredTrackRef = useRef<string | null>(null);
   const dragRef = useRef<null | {
-    kind: "seek" | "pan" | "resize-l" | "resize-r" | "scrub" | "caliper" | "ann" | "dsa";
+    kind:
+      | "seek"
+      | "pan"
+      | "resize-l"
+      | "resize-r"
+      | "scrub"
+      | "caliper"
+      | "ann"
+      | "dsa-pan"
+      | "dsa-resize-l"
+      | "dsa-resize-r"
+      | "dsa-seek";
     x0: number;
     start0: number;
     dur0: number;
@@ -270,7 +209,18 @@ export function WaveformView() {
     const wrap = wrapRef.current;
     const ovWrap = overviewWrapRef.current;
     const dsaWrap = dsaWrapRef.current;
-    if (!editor || !overlay || !overview || !ovOverlay || !wrap || !ovWrap || !dsa || !dsaOv || !dsaWrap) return;
+    if (
+      !editor ||
+      !overlay ||
+      !overview ||
+      !ovOverlay ||
+      !wrap ||
+      !ovWrap ||
+      !dsa ||
+      !dsaOv ||
+      !dsaWrap
+    )
+      return;
 
     let raf = 0;
     let looping = false;
@@ -309,7 +259,7 @@ export function WaveformView() {
             viewDur.toFixed(3),
             s.sensitivityUv,
             s.negativeUp ? 1 : 0,
-            s.colorBy,
+            hoveredTrackRef.current,
             cssW,
             cssH,
             Object.values(s.tracks)
@@ -318,9 +268,22 @@ export function WaveformView() {
           ].join("|");
           if (sig !== waveSig) {
             waveSig = sig;
-            drawEditor(ectx, cssW, cssH, list, s, viewStart, viewEnd);
+            drawEditor(ectx, cssW, cssH, list, s, viewStart, viewEnd, hoveredTrackRef.current);
           }
-          drawEditorOverlay(octx, cssW, cssH, t, viewStart, viewDur, total, s.annotations, s.showAuto, s.selectedAnnotation, caliperRef.current, s.showAnnotations);
+          drawEditorOverlay(
+            octx,
+            cssW,
+            cssH,
+            t,
+            viewStart,
+            viewDur,
+            total,
+            s.annotations,
+            s.showAuto,
+            s.selectedAnnotation,
+            caliperRef.current,
+            s.showAnnotations,
+          );
         }
       }
 
@@ -330,19 +293,25 @@ export function WaveformView() {
         const ctx = overview.getContext("2d");
         const octx = ovOverlay.getContext("2d");
         if (ctx && octx) {
-          const osig = [
-            list.length,
-            total,
-            ovW,
-            ovH,
-            s.negativeUp ? 1 : 0,
-            s.sensitivityUv,
-          ].join("|");
+          const osig = [list.length, total, ovW, ovH, s.negativeUp ? 1 : 0, s.sensitivityUv].join(
+            "|",
+          );
           if (osig !== ovSig) {
             ovSig = osig;
             drawOverviewWaves(ctx, ovW, ovH, list, s, total);
           }
-          drawOverviewOverlay(octx, ovW, ovH, t, viewStart, viewDur, total, s.annotations, s.showAuto, s.showAnnotations);
+          drawOverviewOverlay(
+            octx,
+            ovW,
+            ovH,
+            t,
+            viewStart,
+            viewDur,
+            total,
+            s.annotations,
+            s.showAuto,
+            s.showAnnotations,
+          );
         }
       }
 
@@ -352,7 +321,7 @@ export function WaveformView() {
         const ctx = dsa.getContext("2d");
         const octx = dsaOv.getContext("2d");
         if (ctx && octx) {
-          const sig = `${s.dsa?.nTime ?? 0}|${s.dsa?.logMax ?? 0}|${dsaW}|${dsaH}`;
+          const sig = `${s.dsa?.nTime ?? 0}|${s.dsa?.dbMin ?? 0}|${s.dsa?.dbMax ?? 0}|${dsaW}|${dsaH}`;
           if (sig !== dsaSig) {
             dsaSig = sig;
             drawDsa(ctx, dsa, dsaW, dsaH, s.dsa);
@@ -409,6 +378,7 @@ export function WaveformView() {
     if (x < 0) return;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     const s = useEegStore.getState();
+    if (s.followPlayhead) s.setFollow(false);
     const follow = s.followPlayhead && playback.playing;
     const vs = follow ? followViewStart(eegNow(s), s.viewDuration, segment.duration) : s.viewStart;
     const frac = clamp(x / Math.max(1, plotW), 0, 1);
@@ -433,6 +403,7 @@ export function WaveformView() {
     }
     seekEeg(t);
     dragRef.current = { kind: "scrub", x0: e.clientX, start0: vs, dur0: s.viewDuration };
+    if (s.audibleScrub) playback.scrubAt(t, 0);
   };
 
   const onOverviewPointer = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -443,6 +414,7 @@ export function WaveformView() {
     const frac = clamp(x / Math.max(1, w), 0, 1);
     const tClick = frac * segment.duration;
     const s = useEegStore.getState();
+    if (s.followPlayhead) s.setFollow(false);
     const follow = s.followPlayhead && playback.playing;
     const vs = follow ? followViewStart(eegNow(s), s.viewDuration, segment.duration) : s.viewStart;
     const vd = s.viewDuration;
@@ -461,15 +433,46 @@ export function WaveformView() {
   const onDsaPointer = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!segment || !dsaWrapRef.current) return;
     const rect = dsaWrapRef.current.getBoundingClientRect();
-    const frac = clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+    const plotW = Math.max(1, rect.width - DSA_LEFT - DSA_RIGHT);
+    const x = e.clientX - rect.left - DSA_LEFT;
+    const frac = clamp(x / plotW, 0, 1);
+    const s = useEegStore.getState();
+    const follow = s.followPlayhead && playback.playing;
+    const vs = follow ? followViewStart(eegNow(s), s.viewDuration, segment.duration) : s.viewStart;
+    const vd = s.viewDuration;
+    const x0 = (vs / segment.duration) * plotW;
+    const x1 = ((vs + vd) / segment.duration) * plotW;
+    const edge = 8;
+    let kind: "dsa-pan" | "dsa-resize-l" | "dsa-resize-r" | "dsa-seek" = "dsa-seek";
+    if (Math.abs(x - x0) <= edge) kind = "dsa-resize-l";
+    else if (Math.abs(x - x1) <= edge) kind = "dsa-resize-r";
+    else if (x >= x0 && x <= x1) kind = "dsa-pan";
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    dragRef.current = { kind: "dsa", x0: e.clientX, start0: 0, dur0: 0 };
-    seekEeg(frac * segment.duration);
+    dragRef.current = { kind, x0: e.clientX, start0: vs, dur0: vd };
+    if (s.followPlayhead) s.setFollow(false);
+    if (kind === "dsa-seek") {
+      seekEeg(frac * segment.duration);
+      if (s.audibleScrub) playback.scrubAt(frac * segment.duration, 0);
+    }
   };
 
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
-    if (!drag || !segment) return;
+    if (!segment) return;
+    if (!drag) {
+      const rect = wrapRef.current?.getBoundingClientRect();
+      const list = (segment.tracks ?? []).filter((t) => t.kind !== "extra");
+      if (rect && e.clientX - rect.left >= GUTTER && list.length > 0) {
+        const laneH = Math.max(1, (rect.height - RULER) / list.length);
+        const lane = Math.floor((e.clientY - rect.top - RULER) / laneH);
+        const next = list[lane]?.id ?? null;
+        if (next !== hoveredTrackRef.current) {
+          hoveredTrackRef.current = next;
+          paintRef.current();
+        }
+      }
+      return;
+    }
     const s = useEegStore.getState();
     if (drag.kind === "caliper" && wrapRef.current) {
       const rect = wrapRef.current.getBoundingClientRect();
@@ -477,7 +480,9 @@ export function WaveformView() {
       const x = e.clientX - rect.left - GUTTER;
       const frac = clamp(x / plotW, 0, 1);
       const follow = s.followPlayhead && playback.playing;
-      const vs = follow ? followViewStart(eegNow(s), s.viewDuration, segment.duration) : s.viewStart;
+      const vs = follow
+        ? followViewStart(eegNow(s), s.viewDuration, segment.duration)
+        : s.viewStart;
       caliperRef.current = { a: drag.start0, b: timeAtFraction(frac, vs, s.viewDuration) };
       paintRef.current();
       return;
@@ -488,14 +493,37 @@ export function WaveformView() {
       const x = e.clientX - rect.left - GUTTER;
       const frac = clamp(x / plotW, 0, 1);
       const follow = s.followPlayhead && playback.playing;
-      const vs = follow ? followViewStart(eegNow(s), s.viewDuration, segment.duration) : s.viewStart;
-      seekEeg(timeAtFraction(frac, vs, s.viewDuration));
+      const vs = follow
+        ? followViewStart(eegNow(s), s.viewDuration, segment.duration)
+        : s.viewStart;
+      const next = timeAtFraction(frac, vs, s.viewDuration);
+      seekEeg(next);
+      if (s.audibleScrub) playback.scrubAt(next, e.clientX - drag.x0);
       return;
     }
-    if (drag.kind === "dsa" && dsaWrapRef.current) {
+    if (
+      (drag.kind === "dsa-pan" ||
+        drag.kind === "dsa-resize-l" ||
+        drag.kind === "dsa-resize-r" ||
+        drag.kind === "dsa-seek") &&
+      dsaWrapRef.current
+    ) {
       const rect = dsaWrapRef.current.getBoundingClientRect();
-      const frac = clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
-      seekEeg(frac * segment.duration);
+      const plotW = Math.max(1, rect.width - DSA_LEFT - DSA_RIGHT);
+      const dt = ((e.clientX - drag.x0) / plotW) * segment.duration;
+      if (drag.kind === "dsa-pan") {
+        setView(drag.start0 + dt, drag.dur0);
+      } else if (drag.kind === "dsa-resize-l") {
+        const end = drag.start0 + drag.dur0;
+        setView(drag.start0 + dt, end - (drag.start0 + dt));
+      } else if (drag.kind === "dsa-resize-r") {
+        setView(drag.start0, drag.dur0 + dt);
+      } else {
+        const frac = clamp((e.clientX - rect.left - DSA_LEFT) / plotW, 0, 1);
+        const next = frac * segment.duration;
+        seekEeg(next);
+        if (s.audibleScrub) playback.scrubAt(next, e.clientX - drag.x0);
+      }
       return;
     }
     if (!overviewWrapRef.current) return;
@@ -518,6 +546,14 @@ export function WaveformView() {
 
   const onPointerUp = () => {
     dragRef.current = null;
+    playback.endScrub();
+  };
+
+  const onPointerLeave = () => {
+    if (hoveredTrackRef.current !== null) {
+      hoveredTrackRef.current = null;
+      paintRef.current();
+    }
   };
 
   useEffect(() => {
@@ -528,6 +564,7 @@ export function WaveformView() {
       e.preventDefault();
       if (e.shiftKey) {
         const s = useEegStore.getState();
+        if (s.followPlayhead) s.setFollow(false);
         const span = s.viewDuration;
         panView((e.deltaY + e.deltaX) * 0.0015 * span);
         return;
@@ -560,9 +597,13 @@ export function WaveformView() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onPointerLeave={onPointerLeave}
       >
         <canvas ref={overviewRef} className="absolute inset-0 size-full" />
-        <canvas ref={overviewOverlayRef} className="pointer-events-none absolute inset-0 size-full" />
+        <canvas
+          ref={overviewOverlayRef}
+          className="pointer-events-none absolute inset-0 size-full"
+        />
         <div className="pointer-events-none absolute left-2 top-1.5 text-[0.625rem] font-medium uppercase tracking-wider text-subtle">
           Recording
         </div>
@@ -571,7 +612,7 @@ export function WaveformView() {
       <div
         ref={dsaWrapRef}
         className={cn(
-          "relative shrink-0 cursor-crosshair border-b border-border bg-bg select-none",
+          "relative shrink-0 cursor-ew-resize border-b border-border bg-bg select-none",
           !showDsa && "hidden",
         )}
         style={{ height: showDsa ? DSA_H : 0 }}
@@ -579,17 +620,15 @@ export function WaveformView() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onPointerLeave={onPointerLeave}
       >
         <canvas ref={dsaRef} className="absolute inset-0 size-full" />
         <canvas ref={dsaOverlayRef} className="pointer-events-none absolute inset-0 size-full" />
         <div className="pointer-events-none absolute left-2 top-1 text-[0.625rem] font-medium uppercase tracking-wider text-subtle">
-          DSA L / R
+          DSA · PSD (dB)
         </div>
         <div className="pointer-events-none absolute right-2 top-1 font-mono text-[0.5625rem] text-subtle">
-          30 Hz
-        </div>
-        <div className="pointer-events-none absolute right-2 bottom-1 font-mono text-[0.5625rem] text-subtle">
-          30 Hz
+          stable scale · drag window
         </div>
       </div>
 
@@ -600,6 +639,7 @@ export function WaveformView() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onPointerLeave={onPointerLeave}
       >
         <canvas ref={editorRef} className="absolute inset-0 size-full" />
         <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
@@ -640,8 +680,16 @@ function drawEditor(
   s: ReturnType<typeof useEegStore.getState>,
   viewStart: number,
   viewEnd: number,
+  hoveredTrackId: string | null,
 ) {
-  ctx.setTransform(Math.min(2, window.devicePixelRatio || 1), 0, 0, Math.min(2, window.devicePixelRatio || 1), 0, 0);
+  ctx.setTransform(
+    Math.min(2, window.devicePixelRatio || 1),
+    0,
+    0,
+    Math.min(2, window.devicePixelRatio || 1),
+    0,
+    0,
+  );
   ctx.clearRect(0, 0, cssW, cssH);
   ctx.fillStyle = "#07080a";
   ctx.fillRect(0, 0, cssW, cssH);
@@ -686,7 +734,6 @@ function drawEditor(
   const audible = audibleIds(Object.values(s.tracks));
   const anySolo = Object.values(s.tracks).some((tr) => tr.solo);
   const nPix = Math.max(1, Math.floor(plotW));
-  const colorByHz = s.colorBy === "band";
 
   list.forEach((tr, i) => {
     const y0 = plotTop + i * laneH;
@@ -705,18 +752,33 @@ function drawEditor(
     const st = s.tracks[tr.id];
     const live = audible.has(tr.id);
     const lat = st?.lateralityOverride ?? tr.laterality;
-    const color = KIND_COLOR[tr.kind] ?? LAT_COLOR[lat];
-    const alpha = live ? 1 : anySolo || st?.mute ? 0.2 : 0.5;
-    const { min, max } = envelopeWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix);
-    const scale = voltagePxPerUv(laneH, s.sensitivityUv);
+    const color = stableTraceColor(tr.id, tr.kind, lat);
+    const hovered = hoveredTrackId === tr.id;
+    const alpha = hovered ? 1 : live ? 1 : anySolo || st?.mute ? 0.2 : 0.56;
+    const raw = envelopeWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix);
     const spp = samplesPerPixel(tr.sampleRate, viewStart, viewEnd, nPix);
-    const midV = spp < MINMAX_SPP ? interpWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix) : null;
-    if (colorByHz && tr.kind === "eeg") {
-      const hz = freqWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix);
-      drawLaneBanded(ctx, min, max, hz, plotX, mid, scale, sign, alpha, midV);
-    } else {
-      drawLane(ctx, min, max, plotX, mid, scale, sign, color, alpha, midV);
-    }
+    const rawMid =
+      spp < MINMAX_SPP ? interpWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix) : null;
+    const profile = tr.kind === "ekg" ? ekgDisplayProfile(tr.samples) : null;
+    const display = profile
+      ? normalizeEkgWindow(raw.min, raw.max, rawMid, profile)
+      : { min: raw.min, max: raw.max, mid: rawMid };
+    const scale = displayScaleForChannel(laneH, s.sensitivityUv, tr.kind, profile);
+    const weight = traceWeight(spp, hovered);
+    drawLane(
+      ctx,
+      display.min,
+      display.max,
+      plotX,
+      mid,
+      scale,
+      sign,
+      color,
+      alpha,
+      display.mid,
+      0,
+      weight,
+    );
   });
 
   if (list.length > 0 && laneH > 18) {
@@ -762,10 +824,13 @@ function drawEditorOverlay(
   const viewEnd = viewStart + viewDur;
   if (showAnnotations) {
     for (const a of annotations) {
-      if (!showAuto && a.source === "auto") continue;
+      if (a.source === "auto" && (a.type === "qrs" || !showAuto)) continue;
       if (a.end < viewStart || a.start > viewEnd) continue;
       const x0 = plotX + clamp((a.start - viewStart) / Math.max(1e-6, viewDur), 0, 1) * plotW;
-      const x1 = plotX + clamp((Math.max(a.end, a.start + 0.02) - viewStart) / Math.max(1e-6, viewDur), 0, 1) * plotW;
+      const x1 =
+        plotX +
+        clamp((Math.max(a.end, a.start + 0.02) - viewStart) / Math.max(1e-6, viewDur), 0, 1) *
+          plotW;
       ctx.fillStyle = MORPH_COLOR[a.type] ?? "#c8ccd4";
       ctx.globalAlpha = a.id === selected ? 0.55 : 0.28;
       ctx.fillRect(x0, 0, Math.max(2, x1 - x0), EVENT_LANE);
@@ -790,7 +855,8 @@ function drawEditorOverlay(
     ctx.font = "500 11px 'IBM Plex Mono', ui-monospace, monospace";
     const dt = Math.abs(caliper.b - caliper.a);
     const hz = dt > 1e-4 ? 1 / dt : 0;
-    const label = hz > 0.2 && hz < 80 ? `${dt.toFixed(3)} s  ${hz.toFixed(1)} Hz` : `${dt.toFixed(3)} s`;
+    const label =
+      hz > 0.2 && hz < 80 ? `${dt.toFixed(3)} s  ${hz.toFixed(1)} Hz` : `${dt.toFixed(3)} s`;
     ctx.fillText(label, Math.min(xa, xb) + 6, 14);
   }
   if (t < viewStart || t > viewStart + viewDur) return;
@@ -831,15 +897,17 @@ function drawOverviewWaves(
   list.forEach((tr, i) => {
     const mid = 4 + i * laneH + laneH / 2;
     const lat = s.tracks[tr.id]?.lateralityOverride ?? tr.laterality;
-    const { min, max } = envelopeWindow(tr.samples, tr.sampleRate, 0, total, nPix);
-    const scale = voltagePxPerUv(laneH, s.sensitivityUv);
+    const raw = envelopeWindow(tr.samples, tr.sampleRate, 0, total, nPix);
+    const profile = tr.kind === "ekg" ? ekgDisplayProfile(tr.samples) : null;
+    const display = profile ? normalizeEkgWindow(raw.min, raw.max, null, profile) : raw;
+    const scale = displayScaleForChannel(laneH, s.sensitivityUv, tr.kind, profile);
     ctx.globalAlpha = 0.9;
-    ctx.strokeStyle = KIND_COLOR[tr.kind] ?? LAT_COLOR[lat];
+    ctx.strokeStyle = stableTraceColor(tr.id, tr.kind, lat);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let p = 0; p < min.length; p++) {
-      ctx.moveTo(p + 0.5, mid + sign * min[p]! * scale);
-      ctx.lineTo(p + 0.5, mid + sign * max[p]! * scale);
+    for (let p = 0; p < display.min.length; p++) {
+      ctx.moveTo(p + 0.5, mid + sign * display.min[p]! * scale);
+      ctx.lineTo(p + 0.5, mid + sign * display.max[p]! * scale);
     }
     ctx.stroke();
     ctx.globalAlpha = 1;
@@ -872,7 +940,7 @@ function drawOverviewOverlay(
   if (total <= 0) return;
   if (showAnnotations) {
     for (const a of annotations) {
-      if (!showAuto && a.source === "auto") continue;
+      if (a.source === "auto" && (a.type === "qrs" || !showAuto)) continue;
       const x = (a.start / total) * cssW;
       ctx.fillStyle = MORPH_COLOR[a.type] ?? "#c8ccd4";
       ctx.fillRect(x, 0, 2, cssH);
@@ -889,10 +957,10 @@ function drawOverviewOverlay(
   ctx.fillRect(x0 - 1, 0, 3, cssH);
   ctx.fillRect(x1 - 2, 0, 3, cssH);
 
-  const px = (t / total) * cssW;
   ctx.strokeStyle = "rgba(232,234,237,0.95)";
   ctx.lineWidth = 1.25;
   ctx.beginPath();
+  const px = (t / total) * cssW;
   ctx.moveTo(px, 0);
   ctx.lineTo(px, cssH);
   ctx.stroke();
@@ -913,15 +981,15 @@ function drawDsa(
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     return;
   }
-  const w = canvas.width;
-  const h = canvas.height;
-  const img = ctx.createImageData(w, h);
+  const plotCssW = Math.max(1, cssW - DSA_LEFT - DSA_RIGHT);
+  const plotW = Math.max(1, Math.floor(plotCssW * dpr));
+  const plotH = Math.max(1, Math.floor((cssH - DSA_TOP - DSA_BOTTOM) * dpr));
+  const img = ctx.createImageData(plotW, plotH);
   const data = img.data;
-  const mid = h / 2;
-  const logMax = frame.logMax;
-  for (let x = 0; x < w; x++) {
-    const ti = Math.min(frame.nTime - 1, Math.floor((x / w) * frame.nTime));
-    for (let y = 0; y < h; y++) {
+  const mid = plotH / 2;
+  for (let x = 0; x < plotW; x++) {
+    const ti = Math.min(frame.nTime - 1, Math.floor((x / plotW) * frame.nTime));
+    for (let y = 0; y < plotH; y++) {
       let src: Float32Array;
       let fBin: number;
       if (y < mid) {
@@ -930,32 +998,64 @@ function drawDsa(
         fBin = Math.min(frame.nFreq - 1, Math.floor(u * (frame.nFreq - 1)));
       } else {
         src = frame.r;
-        const u = (y - mid) / Math.max(1, h - mid - 1);
+        const u = (y - mid) / Math.max(1, plotH - mid - 1);
         fBin = Math.min(frame.nFreq - 1, Math.floor(u * (frame.nFreq - 1)));
       }
       const p = src[ti * frame.nFreq + fBin] ?? 0;
-      const [r, g, b] = dsaRgb(dsaUnit(p, logMax));
-      const i = (y * w + x) * 4;
+      const [r, g, b] = dsaRgb(dsaUnit(p, frame.dbMin, frame.dbMax));
+      const i = (y * plotW + x) * 4;
       data[i] = r;
       data[i + 1] = g;
       data[i + 2] = b;
       data[i + 3] = 255;
     }
   }
-  ctx.putImageData(img, 0, 0);
+  ctx.putImageData(img, Math.round(DSA_LEFT * dpr), Math.round(DSA_TOP * dpr));
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.strokeStyle = "rgba(232,234,237,0.18)";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(0, cssH / 2);
-  ctx.lineTo(cssW, cssH / 2);
+  ctx.moveTo(DSA_LEFT, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) / 2);
+  ctx.lineTo(cssW - DSA_RIGHT, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) / 2);
   ctx.stroke();
   ctx.fillStyle = "#8b919c";
   ctx.font = "500 9px 'IBM Plex Mono', ui-monospace, monospace";
   ctx.textBaseline = "middle";
-  ctx.fillText("L", 6, cssH * 0.22);
-  ctx.fillText("0", 6, cssH * 0.5);
-  ctx.fillText("R", 6, cssH * 0.78);
+  ctx.fillText("L", 7, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.25);
+  ctx.fillText("0", 7, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.5);
+  ctx.fillText("R", 7, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.75);
+  ctx.textAlign = "right";
+  ctx.fillText(`${frame.fMax.toFixed(0)} Hz`, DSA_LEFT - 5, DSA_TOP + 4);
+  ctx.fillText(
+    `${(frame.fMax / 2).toFixed(0)} Hz`,
+    DSA_LEFT - 5,
+    DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.25,
+  );
+  ctx.fillText("0 Hz", DSA_LEFT - 5, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.5);
+  ctx.textAlign = "left";
+  const legendX = cssW - DSA_RIGHT + 10;
+  const legendY = DSA_TOP + 4;
+  const legendW = Math.max(16, DSA_RIGHT - 20);
+  const gradient = ctx.createLinearGradient(legendX, 0, legendX + legendW, 0);
+  for (let i = 0; i <= 10; i++) {
+    const [r, g, b] = dsaRgb(i / 10);
+    gradient.addColorStop(i / 10, `rgb(${r} ${g} ${b})`);
+  }
+  ctx.fillStyle = gradient;
+  ctx.fillRect(legendX, legendY, legendW, 5);
+  ctx.fillStyle = "#8b919c";
+  ctx.textBaseline = "top";
+  ctx.fillText(`${Math.round(frame.dbMax)} dB`, legendX, legendY + 8);
+  ctx.textAlign = "right";
+  ctx.fillText(`${Math.round(frame.dbMin)} dB`, legendX + legendW, legendY + 8);
+  ctx.textAlign = "left";
+  ctx.fillText("PSD", legendX, cssH - 10);
+  ctx.textBaseline = "bottom";
+  const timeStep = niceStep(frame.duration);
+  for (let time = 0; time <= frame.duration + 1e-6; time += timeStep) {
+    const x = DSA_LEFT + (time / Math.max(1e-6, frame.duration)) * plotCssW;
+    ctx.fillText(formatTick(time, frame.duration), x + 2, cssH - 2);
+  }
 }
 
 function drawDsaOverlay(
@@ -971,20 +1071,31 @@ function drawDsaOverlay(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
   if (total <= 0) return;
-  const x0 = (viewStart / total) * cssW;
-  const x1 = ((viewStart + viewDur) / total) * cssW;
+  const plotW = Math.max(1, cssW - DSA_LEFT - DSA_RIGHT);
+  const plotX = (time: number) => DSA_LEFT + (time / total) * plotW;
+  const x0 = plotX(viewStart);
+  const x1 = plotX(viewStart + viewDur);
+  const plotTop = DSA_TOP;
+  const plotH = Math.max(1, cssH - DSA_TOP - DSA_BOTTOM);
   ctx.fillStyle = "rgba(232,234,237,0.06)";
-  ctx.fillRect(x0, 0, Math.max(2, x1 - x0), cssH);
+  ctx.fillRect(x0, plotTop, Math.max(2, x1 - x0), plotH);
   ctx.strokeStyle = "rgba(232,234,237,0.45)";
   ctx.lineWidth = 1;
-  ctx.strokeRect(x0 + 0.5, 0.5, Math.max(2, x1 - x0 - 1), cssH - 1);
-  const px = (t / total) * cssW;
+  ctx.strokeRect(x0 + 0.5, plotTop + 0.5, Math.max(2, x1 - x0 - 1), plotH - 1);
   ctx.strokeStyle = "rgba(232,234,237,0.95)";
   ctx.lineWidth = 1.25;
   ctx.beginPath();
-  ctx.moveTo(px, 0);
-  ctx.lineTo(px, cssH);
+  ctx.moveTo(plotX(t), plotTop);
+  ctx.lineTo(plotX(t), plotTop + plotH);
   ctx.stroke();
+  ctx.fillStyle = "rgba(232,234,237,0.9)";
+  ctx.font = "500 9px 'IBM Plex Mono', ui-monospace, monospace";
+  ctx.textBaseline = "bottom";
+  ctx.fillText(
+    formatTick(t, viewDur),
+    Math.min(cssW - DSA_RIGHT - 34, Math.max(DSA_LEFT + 2, plotX(t) + 4)),
+    cssH - 2,
+  );
 }
 
 function TrackGutter({
@@ -1009,6 +1120,11 @@ function TrackGutter({
       className="pointer-events-auto flex items-center gap-0.5 border-b border-border/50 px-1"
       style={{ height: `${100 / count}%` }}
     >
+      <span
+        className="size-2 shrink-0 rounded-full"
+        style={{ background: stableTraceColor(track.id, track.kind, lat) }}
+        aria-hidden="true"
+      />
       <button
         type="button"
         title="Solo — multiple tracks can be soloed. Double-click for exclusive."
@@ -1034,7 +1150,9 @@ function TrackGutter({
       </button>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-1">
-          <span className="truncate font-mono text-[0.625rem] leading-tight text-fg">{track.label}</span>
+          <span className="truncate font-mono text-[0.625rem] leading-tight text-fg">
+            {track.label}
+          </span>
           <span
             className={cn(
               "shrink-0 text-[0.625rem] uppercase",

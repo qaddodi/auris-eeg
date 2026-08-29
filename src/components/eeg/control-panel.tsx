@@ -1,8 +1,15 @@
 "use client";
 
 import { useRef } from "react";
-import { Upload } from "lucide-react";
-import { COMPRESSION_PRESETS, ROOT_NOTES, SENSITIVITY_PRESETS, TIME_SCALE_PRESETS, MIN_SENSITIVITY_UV, MAX_SENSITIVITY_UV } from "@/lib/eeg/defaults";
+import { ChevronDown, Headphones, SlidersHorizontal, Upload } from "lucide-react";
+import {
+  COMPRESSION_PRESETS,
+  ROOT_NOTES,
+  SENSITIVITY_PRESETS,
+  TIME_SCALE_PRESETS,
+  MIN_SENSITIVITY_UV,
+  MAX_SENSITIVITY_UV,
+} from "@/lib/eeg/defaults";
 import { describeMapping } from "@/lib/eeg/sonify";
 import { SCALE_LABELS } from "@/lib/eeg/musify";
 import { STANDARD_ELECTRODES } from "@/lib/eeg/montages";
@@ -33,8 +40,6 @@ export function ControlPanel() {
   const duration = useEegStore((s) => s.viewDuration);
   const setViewDuration = useEegStore((s) => s.setViewDuration);
   const seekEeg = useEegStore((s) => s.seekEeg);
-  const followPlayhead = useEegStore((s) => s.followPlayhead);
-  const setFollow = useEegStore((s) => s.setFollow);
   const filters = useEegStore((s) => s.filters);
   const setFilters = useEegStore((s) => s.setFilters);
   const sonify = useEegStore((s) => s.sonify);
@@ -51,6 +56,8 @@ export function ControlPanel() {
   const setCustomAB = useEegStore((s) => s.setCustomAB);
   const addCustomPair = useEegStore((s) => s.addCustomPair);
   const removeCustomPair = useEegStore((s) => s.removeCustomPair);
+  const audibleScrub = useEegStore((s) => s.audibleScrub);
+  const setAudibleScrub = useEegStore((s) => s.setAudibleScrub);
   const state = useEegStore();
 
   const onFiles = (files: FileList | null) => {
@@ -152,7 +159,9 @@ export function ControlPanel() {
               type="button"
               onClick={() => setMontage(id)}
               className={`h-8 rounded-sm px-2 text-left text-xs ${
-                montage === id ? "bg-accent text-accent-fg" : "bg-bg text-fg/80 shadow-border hover:text-fg"
+                montage === id
+                  ? "bg-accent text-accent-fg"
+                  : "bg-bg text-fg/80 shadow-border hover:text-fg"
               }`}
             >
               {label}
@@ -171,12 +180,20 @@ export function ControlPanel() {
         {montage === "custom" && (
           <div className="space-y-2">
             <div className="flex gap-2">
-              <select className={field} value={customA} onChange={(e) => setCustomAB(e.target.value, customB)}>
+              <select
+                className={field}
+                value={customA}
+                onChange={(e) => setCustomAB(e.target.value, customB)}
+              >
                 {STANDARD_ELECTRODES.map((e) => (
                   <option key={e}>{e}</option>
                 ))}
               </select>
-              <select className={field} value={customB} onChange={(e) => setCustomAB(customA, e.target.value)}>
+              <select
+                className={field}
+                value={customB}
+                onChange={(e) => setCustomAB(customA, e.target.value)}
+              >
                 {STANDARD_ELECTRODES.map((e) => (
                   <option key={e}>{e}</option>
                 ))}
@@ -187,11 +204,18 @@ export function ControlPanel() {
             </Button>
             <ul className="space-y-1">
               {customPairs.map((p, i) => (
-                <li key={`${p[0]}-${p[1]}-${i}`} className="flex items-center justify-between text-xs">
+                <li
+                  key={`${p[0]}-${p[1]}-${i}`}
+                  className="flex items-center justify-between text-xs"
+                >
                   <span className="font-mono">
                     {p[0]}–{p[1]}
                   </span>
-                  <button type="button" className="text-subtle hover:text-danger" onClick={() => removeCustomPair(i)}>
+                  <button
+                    type="button"
+                    className="text-subtle hover:text-danger"
+                    onClick={() => removeCustomPair(i)}
+                  >
                     Remove
                   </button>
                 </li>
@@ -199,17 +223,6 @@ export function ControlPanel() {
             </ul>
           </div>
         )}
-      </section>
-
-      <Separator />
-
-      <section className="space-y-3 p-4">
-        <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-subtle">Mixer</p>
-        <p className="text-pretty text-xs text-muted">
-          S = solo (several at once). M = mute. Double-click S for exclusive solo. Lids and EKG sit
-          under the EEG chains.
-        </p>
-        <MixerStrip />
       </section>
 
       <Separator />
@@ -227,15 +240,6 @@ export function ControlPanel() {
           The overview is the whole recording. This window is what the editor shows — zoom and
           follow like a DAW.
         </p>
-        <label className="flex items-center justify-between gap-2 text-sm text-fg">
-          Follow playhead
-          <input
-            type="checkbox"
-            checked={followPlayhead}
-            onChange={(e) => setFollow(e.target.checked)}
-            className="size-4 accent-accent"
-          />
-        </label>
         <Label htmlFor="jump">Jump to (s)</Label>
         <input
           id="jump"
@@ -257,7 +261,9 @@ export function ControlPanel() {
               type="button"
               onClick={() => setViewDuration(d)}
               className={`h-7 rounded-full px-2.5 text-xs tabular-nums ${
-                Math.abs(duration - d) < 0.05 ? "bg-accent text-accent-fg" : "bg-bg text-muted shadow-border"
+                Math.abs(duration - d) < 0.05
+                  ? "bg-accent text-accent-fg"
+                  : "bg-bg text-muted shadow-border"
               }`}
             >
               {d}s
@@ -284,7 +290,9 @@ export function ControlPanel() {
           <Label>Sensitivity</Label>
           <span className="font-mono text-xs tabular-nums text-muted">{sensitivityUv} µV p–p</span>
         </div>
-        <p className="text-[0.6875rem] text-subtle">Lower µV = bigger waves. Fit sizes the page to the tracing.</p>
+        <p className="text-[0.6875rem] text-subtle">
+          Lower µV = bigger waves. Fit sizes the page to the tracing.
+        </p>
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -346,23 +354,12 @@ export function ControlPanel() {
       <section className="space-y-3 p-4">
         <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-subtle">Listen</p>
         <p className="text-pretty text-xs text-muted">
-          Contour: up on the graph raises pitch. Pen: analog paper scratch — fast
-          deflections hiss, still baseline is quiet. Pulse: count the rhythm. Choir:
-          just-intonation 1/f chord (delta–beta). Piano (experimental): a real scale
-          while the field looks ordinary — spikes clang off-key. Direct is the raw wave.
+          Contour: up on the graph raises pitch. Pen: analog paper scratch — fast deflections hiss,
+          still baseline is quiet. Pulse: count the rhythm. Ambient: smoothed delta–beta power
+          becomes a restrained harmonic bed. Choir is the just-intonation 1/f version. Piano is a
+          restrained scale voice with transient accents. Direct is the raw wave. Playback starts at
+          a fixed safe level; per-track gain is in Extra tools.
         </p>
-        <div className="flex items-center justify-between gap-2">
-          <Label>Volume {Math.round((sonify.volume ?? 1.45) * 100)}%</Label>
-        </div>
-        <input
-          type="range"
-          min={0.4}
-          max={2.2}
-          step={0.05}
-          value={sonify.volume ?? 1.45}
-          onChange={(e) => setSonify({ volume: Number(e.target.value) })}
-          className="w-full accent-accent"
-        />
         <Label>Scale</Label>
         <div className="grid grid-cols-2 gap-1.5">
           {(Object.keys(SCALE_LABELS) as ScaleName[]).map((id) => (
@@ -386,7 +383,9 @@ export function ControlPanel() {
               type="button"
               onClick={() => setSonify({ rootMidi: n.midi })}
               className={`h-7 rounded-full px-2.5 text-xs ${
-                sonify.rootMidi === n.midi ? "bg-accent text-accent-fg" : "bg-bg text-muted shadow-border"
+                sonify.rootMidi === n.midi
+                  ? "bg-accent text-accent-fg"
+                  : "bg-bg text-muted shadow-border"
               }`}
             >
               {n.label}
@@ -422,14 +421,18 @@ export function ControlPanel() {
                   type="button"
                   onClick={() => setSonify({ compression: c })}
                   className={`h-7 rounded-full px-2.5 text-xs tabular-nums ${
-                    sonify.compression === c ? "bg-accent text-accent-fg" : "bg-bg text-muted shadow-border"
+                    sonify.compression === c
+                      ? "bg-accent text-accent-fg"
+                      : "bg-bg text-muted shadow-border"
                   }`}
                 >
                   {c}×
                 </button>
               ))}
             </div>
-            <p className="text-[0.6875rem] text-pretty text-subtle">{describeMapping(sonify.compression)}</p>
+            <p className="text-[0.6875rem] text-pretty text-subtle">
+              {describeMapping(sonify.compression)}
+            </p>
           </>
         ) : (
           <>
@@ -441,7 +444,9 @@ export function ControlPanel() {
                   type="button"
                   onClick={() => setSonify({ timeScale: c })}
                   className={`h-7 rounded-full px-2.5 text-xs tabular-nums ${
-                    sonify.timeScale === c ? "bg-accent text-accent-fg" : "bg-bg text-muted shadow-border"
+                    sonify.timeScale === c
+                      ? "bg-accent text-accent-fg"
+                      : "bg-bg text-muted shadow-border"
                   }`}
                 >
                   {c}×
@@ -471,6 +476,60 @@ export function ControlPanel() {
             className="size-4 accent-accent"
           />
         </label>
+      </section>
+
+      <Separator />
+
+      <section className="p-4">
+        <details className="group overflow-hidden rounded-md bg-bg shadow-border">
+          <summary className="flex min-h-11 list-none items-center gap-2 px-3 py-2 text-left [&::-webkit-details-marker]:hidden">
+            <SlidersHorizontal className="size-4 text-accent" aria-hidden="true" />
+            <span className="flex-1">
+              <span className="block text-sm font-medium text-fg">Extra tools</span>
+              <span className="block text-[0.6875rem] text-subtle">
+                Mixer, channel gain, and scrub audio
+              </span>
+            </span>
+            <ChevronDown
+              className="size-4 text-subtle transition-transform duration-150 group-open:rotate-180"
+              aria-hidden="true"
+            />
+          </summary>
+          <div className="space-y-4 border-t border-border px-3 py-3">
+            <div className="space-y-2">
+              <div>
+                <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-subtle">
+                  Mixer
+                </p>
+                <p className="mt-1 text-pretty text-xs text-muted">
+                  S = solo, M = mute. Double-click S for an exclusive solo. Track gains stay live
+                  during playback.
+                </p>
+              </div>
+              <MixerStrip />
+            </div>
+            <div className="border-t border-border pt-3">
+              <label className="flex min-h-11 items-center gap-3 text-sm text-fg">
+                <span className="grid size-8 shrink-0 place-items-center rounded-sm bg-surface-2 text-accent">
+                  <Headphones className="size-4" aria-hidden="true" />
+                </span>
+                <span className="flex-1">
+                  <span className="block font-medium">Audible scrubbing</span>
+                  <span className="block text-[0.6875rem] text-subtle">
+                    Hear a short preview while dragging the tracing
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={audibleScrub}
+                  onChange={(e) => setAudibleScrub(e.target.checked)}
+                  className="size-4 accent-accent"
+                  aria-label="Enable audible scrubbing"
+                />
+              </label>
+            </div>
+          </div>
+        </details>
       </section>
 
       <Separator />

@@ -52,11 +52,6 @@ export function useEditorKeys() {
         s.setShowDsa(!s.showDsa);
         return;
       }
-      if (e.key === "b" || e.key === "B") {
-        e.preventDefault();
-        s.setColorBy(s.colorBy === "band" ? "hemi" : "band");
-        return;
-      }
       if (e.key === "," || e.key === "<") {
         e.preventDefault();
         s.nudgeSensitivity(-1);

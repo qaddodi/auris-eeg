@@ -1,4 +1,10 @@
-import { bandpassForward, envelopeFollow, fadeEdges, robustNormalize, softLimit } from "./preprocessing.ts";
+import {
+  bandpassForward,
+  envelopeFollow,
+  fadeEdges,
+  robustNormalize,
+  softLimit,
+} from "./preprocessing.ts";
 import type { ScaleName, SonifySettings } from "./types.ts";
 
 export const SCALE_DEGREES: Record<ScaleName, number[]> = {
@@ -65,7 +71,12 @@ function interpolate(x: Float32Array, index: number): number {
   return x[i]! * (1 - f) + x[i + 1]! * f;
 }
 
-function resample(x: Float32Array, eegRate: number, audioRate: number, timeScale: number): Float32Array {
+function resample(
+  x: Float32Array,
+  eegRate: number,
+  audioRate: number,
+  timeScale: number,
+): Float32Array {
   const eegDur = x.length / Math.max(1, eegRate);
   const audioDur = Math.max(1 / audioRate, eegDur / Math.max(0.1, timeScale));
   const n = Math.max(1, Math.round(audioDur * audioRate));
@@ -75,7 +86,13 @@ function resample(x: Float32Array, eegRate: number, audioRate: number, timeScale
   return out;
 }
 
-function tone(n: number, rate: number, hz: number, env: Float32Array, harmonic = 0.14): Float32Array {
+function tone(
+  n: number,
+  rate: number,
+  hz: number,
+  env: Float32Array,
+  harmonic = 0.14,
+): Float32Array {
   const out = new Float32Array(n);
   const w = (2 * Math.PI * hz) / rate;
   const w2 = (2 * Math.PI * hz * 2) / rate;
@@ -98,7 +115,11 @@ const BANDS: { lo: number; hi: number; envHz: number }[] = [
  * 1/f amplitudes (Wu 2009 scale-free brain-wave music) keep the chord warm.
  * 3 Hz spike-and-wave pulses the bass; 10 Hz alpha sings the fifth.
  */
-export function choirVoice(eeg: Float32Array, eegRate: number, settings: SonifySettings): Float32Array {
+export function choirVoice(
+  eeg: Float32Array,
+  eegRate: number,
+  settings: SonifySettings,
+): Float32Array {
   const norm = robustNormalize(eeg, settings.percentile, 0.9);
   const timeScale = settings.timeScale;
   const audioRate = settings.outputRate;
@@ -135,7 +156,11 @@ function dominantHz(x: Float32Array, fs: number, i0: number, i1: number): number
   return zc / Math.max(1e-6, (i1 - i0) / fs);
 }
 
-export function scaleVoice(eeg: Float32Array, eegRate: number, settings: SonifySettings): Float32Array {
+export function scaleVoice(
+  eeg: Float32Array,
+  eegRate: number,
+  settings: SonifySettings,
+): Float32Array {
   const norm = robustNormalize(eeg, settings.percentile, 0.9);
   const timeScale = settings.timeScale;
   const audioRate = settings.outputRate;
@@ -145,6 +170,11 @@ export function scaleVoice(eeg: Float32Array, eegRate: number, settings: SonifyS
   let phase = 0;
   let hz = midiToHz(settings.rootMidi);
   let env = 0;
+  let heldMidi = settings.rootMidi;
+  let noteCooldown = 0;
+  let hammer = 0;
+  let fast = 0;
+  let slow = 0;
   const win = Math.max(8, Math.round((eegRate * 0.12) / timeScale));
   for (let i = 0; i < n; i++) {
     const eegI = (i / n) * (eeg.length - 1);
@@ -153,7 +183,38 @@ export function scaleVoice(eeg: Float32Array, eegRate: number, settings: SonifyS
     const inst = dominantHz(eeg, eegRate, i0, i1);
     const target = settings.quantize
       ? eegHzToScaleHz(inst || 8, settings.rootMidi, settings.scale)
-      : midiToHz(settings.rootMidi + Math.max(-1, Math.min(1, audio[i]!)) * settings.rangeSemitones);
+      : midiToHz(
+          settings.rootMidi + Math.max(-1, Math.min(1, audio[i]!)) * settings.rangeSemitones,
+        );
+    if (settings.mode === "piano") {
+      const sample = audio[i] ?? 0;
+      const fastA = 1 - Math.exp(-1 / Math.max(1, audioRate * 0.01));
+      const slowA = 1 - Math.exp(-1 / Math.max(1, audioRate * 0.09));
+      fast += fastA * (sample - fast);
+      slow += slowA * (sample - slow);
+      const transient = Math.abs(fast - slow);
+      const abnormal = transient > 0.18 ? (Math.abs(sample) > 0.28 ? 6 : 0.35) : 0;
+      const requestedMidi = hzToMidi(target) + abnormal;
+      noteCooldown = Math.max(0, noteCooldown - 1);
+      if (noteCooldown <= 0 && Math.abs(requestedMidi - heldMidi) > 0.45) {
+        heldMidi = requestedMidi;
+        noteCooldown = Math.max(1, Math.round(audioRate * 0.11));
+        hammer = 1;
+      }
+      hammer *= Math.exp(-1 / Math.max(1, audioRate * 0.085));
+      const pianoTarget = midiToHz(heldMidi);
+      hz += 0.07 * (pianoTarget - hz);
+      const pianoShape =
+        Math.sin(phase) +
+        0.5 * Math.sin(phase * 2) +
+        0.24 * Math.sin(phase * 3) +
+        0.11 * Math.sin(phase * 4) +
+        hammer * 0.34 * Math.sin(phase * 7);
+      env += 0.05 * (Math.min(1, Math.abs(sample) * 1.35) - env);
+      phase += (2 * Math.PI * hz) / audioRate;
+      out[i] = pianoShape * env;
+      continue;
+    }
     hz += 0.04 * (target - hz);
     env += 0.05 * (Math.min(1, Math.abs(audio[i]!) * 1.4) - env);
     phase += (2 * Math.PI * hz) / audioRate;
@@ -162,7 +223,11 @@ export function scaleVoice(eeg: Float32Array, eegRate: number, settings: SonifyS
   return fadeEdges(softLimit(out, 0.9), audioRate, 10);
 }
 
-export function ekgVoice(eeg: Float32Array, eegRate: number, settings: SonifySettings): Float32Array {
+export function ekgVoice(
+  eeg: Float32Array,
+  eegRate: number,
+  settings: SonifySettings,
+): Float32Array {
   const env = envelopeFollow(eeg, eegRate, 18);
   const timeScale = settings.mode === "direct" ? settings.compression : settings.timeScale;
   const audioRate = settings.outputRate;
@@ -177,7 +242,11 @@ export function ekgVoice(eeg: Float32Array, eegRate: number, settings: SonifySet
   return fadeEdges(softLimit(out, 1.05), audioRate, 8);
 }
 
-export function eogVoice(eeg: Float32Array, eegRate: number, settings: SonifySettings): Float32Array {
+export function eogVoice(
+  eeg: Float32Array,
+  eegRate: number,
+  settings: SonifySettings,
+): Float32Array {
   const slow = bandpassForward(eeg, eegRate, 0.1, 8);
   const env = envelopeFollow(slow, eegRate, 4);
   const timeScale = settings.mode === "direct" ? settings.compression : settings.timeScale;
@@ -188,7 +257,7 @@ export function eogVoice(eeg: Float32Array, eegRate: number, settings: SonifySet
   const w = (2 * Math.PI * 186) / audioRate;
   let noise = 0;
   for (let i = 0; i < n; i++) {
-    noise = (noise * 0.96 + (Math.sin(i * 12.9898) * 43758.5453) % 1) % 1;
+    noise = (noise * 0.96 + ((Math.sin(i * 12.9898) * 43758.5453) % 1)) % 1;
     const e = audioEnv[i]!;
     out[i] = (0.7 * Math.sin(w * i) + 0.35 * (noise * 2 - 1)) * e;
   }

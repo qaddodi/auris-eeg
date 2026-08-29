@@ -21,7 +21,14 @@ import {
   mixSonify,
   timeCompress,
 } from "./sonify.ts";
-import { applyFilters, fadeEdges, hasNan, peakAbs, robustNormalize, softLimit } from "./preprocessing.ts";
+import {
+  applyFilters,
+  fadeEdges,
+  hasNan,
+  peakAbs,
+  robustNormalize,
+  softLimit,
+} from "./preprocessing.ts";
 import { averageChannels, equalPowerGains } from "./stereo.ts";
 import {
   buildSyntheticEdf,
@@ -33,7 +40,15 @@ import {
   sine,
   spikeAndWave,
 } from "./synthetic.ts";
-import { clampView, envelopeWindow, fitSensitivityUv, followViewStart, interpWindow, samplesPerPixel, zoomView } from "./view.ts";
+import {
+  clampView,
+  envelopeWindow,
+  fitSensitivityUv,
+  followViewStart,
+  interpWindow,
+  samplesPerPixel,
+  zoomView,
+} from "./view.ts";
 import {
   clampSensitivity,
   DEFAULT_SENSITIVITY_UV,
@@ -42,9 +57,12 @@ import {
   voltagePxPerUv,
 } from "./defaults.ts";
 import { choirVoice, eegHzToScaleHz, ekgVoice, scaleVoice } from "./musify.ts";
-import { voltageToMidi, renderContour, waveAbnormality } from "./contour.ts";
-import { detectMorphologies, detectTransients } from "./patterns.ts";
-import { mixdownTracks } from "./audio.ts";
+import { voltageToMidi, waveAbnormality } from "./contour.ts";
+import { MixerEngine, mixdownTracks } from "./audio.ts";
+import { stableTraceColor } from "./colors.ts";
+import { displayScaleForChannel, ekgDisplayProfile, normalizeEkgValue } from "./display.ts";
+import { detectMorphologies } from "./patterns.ts";
+import { scrubPreviewTime } from "./scrub.ts";
 import {
   BAND_COLORS,
   bandFromHz,
@@ -52,6 +70,8 @@ import {
   buildDsa,
   colorForHz,
   dsaColumn,
+  dsaDb,
+  dsaUnit,
   fftPower,
   freqWindow,
 } from "./spectrum.ts";
@@ -243,8 +263,26 @@ describe("sonification", () => {
     const right = new Float32Array(left.length);
     const mix = mixSonify(
       [
-        { id: "L", label: "Fp1", samples: left, sampleRate: 200, laterality: "left", kind: "eeg", gain: 1, audible: true },
-        { id: "R", label: "Fp2", samples: right, sampleRate: 200, laterality: "right", kind: "eeg", gain: 1, audible: true },
+        {
+          id: "L",
+          label: "Fp1",
+          samples: left,
+          sampleRate: 200,
+          laterality: "left",
+          kind: "eeg",
+          gain: 1,
+          audible: true,
+        },
+        {
+          id: "R",
+          label: "Fp2",
+          samples: right,
+          sampleRate: 200,
+          laterality: "right",
+          kind: "eeg",
+          gain: 1,
+          audible: true,
+        },
       ],
       settings,
       "per-track",
@@ -261,8 +299,26 @@ describe("sonification", () => {
     const left = new Float32Array(right.length);
     const mix = mixSonify(
       [
-        { id: "L", label: "Fp1", samples: left, sampleRate: 200, laterality: "left", kind: "eeg", gain: 1, audible: true },
-        { id: "R", label: "Fp2", samples: right, sampleRate: 200, laterality: "right", kind: "eeg", gain: 1, audible: true },
+        {
+          id: "L",
+          label: "Fp1",
+          samples: left,
+          sampleRate: 200,
+          laterality: "left",
+          kind: "eeg",
+          gain: 1,
+          audible: true,
+        },
+        {
+          id: "R",
+          label: "Fp2",
+          samples: right,
+          sampleRate: 200,
+          laterality: "right",
+          kind: "eeg",
+          gain: 1,
+          audible: true,
+        },
       ],
       settings,
       "per-track",
@@ -275,7 +331,18 @@ describe("sonification", () => {
   it("respects mute via audible flag", () => {
     const s = sine(10, 200, 0.5, 1);
     const mix = mixSonify(
-      [{ id: "L", label: "Fp1", samples: s, sampleRate: 200, laterality: "left", kind: "eeg", gain: 1, audible: false }],
+      [
+        {
+          id: "L",
+          label: "Fp1",
+          samples: s,
+          sampleRate: 200,
+          laterality: "left",
+          kind: "eeg",
+          gain: 1,
+          audible: false,
+        },
+      ],
       { ...settings, compression: 20 },
       "per-track",
     );
@@ -297,7 +364,18 @@ describe("synthetic morphologies stay structured after compression", () => {
 
   function mixOne(samples: Float32Array) {
     return mixSonify(
-      [{ id: "c", label: "Cz", samples, sampleRate: 200, laterality: "midline", kind: "eeg", gain: 1, audible: true }],
+      [
+        {
+          id: "c",
+          label: "Cz",
+          samples,
+          sampleRate: 200,
+          laterality: "midline",
+          kind: "eeg",
+          gain: 1,
+          audible: true,
+        },
+      ],
       s,
       "per-track",
     );
@@ -430,6 +508,56 @@ describe("editor view", () => {
   });
 });
 
+describe("display normalization and semantic colors", () => {
+  it("keeps EKG display gain independent from EEG sensitivity and zoom", () => {
+    const fs = 200;
+    const ekg = new Float32Array(fs * 20);
+    for (let i = 0; i < ekg.length; i++) {
+      ekg[i] = 240 + Math.sin((2 * Math.PI * 1.2 * i) / fs) * 18;
+    }
+    ekg[fs * 7] = 12000;
+    const profile = ekgDisplayProfile(ekg);
+    const narrow = displayScaleForChannel(40, 70, "ekg", profile);
+    const wide = displayScaleForChannel(40, 300, "ekg", profile);
+    assert.equal(narrow, wide);
+    assert.ok(profile.baselineUv > 230 && profile.baselineUv < 250);
+    assert.ok(profile.robustPeakUv < 80, `robust peak ${profile.robustPeakUv}`);
+    assert.ok(Math.abs(normalizeEkgValue(240, profile)) < 20);
+    assert.ok(Math.abs(normalizeEkgValue(12000, profile)) <= profile.clipUv);
+    assert.notEqual(displayScaleForChannel(40, 70, "eeg"), displayScaleForChannel(40, 300, "eeg"));
+  });
+
+  it("assigns trace colors from stable identity, not visible order", () => {
+    const identity = { id: "banana:Fp1-F7", kind: "eeg" as const, laterality: "left" as const };
+    assert.equal(
+      stableTraceColor(identity.id, identity.kind, identity.laterality),
+      stableTraceColor(identity.id, identity.kind, identity.laterality),
+    );
+    assert.notEqual(
+      stableTraceColor("banana:Fp1-F7", "eeg", "left"),
+      stableTraceColor("banana:F7-T3", "eeg", "left"),
+    );
+    assert.equal(
+      stableTraceColor("aux:ekg", "ekg", "midline"),
+      stableTraceColor("aux:ekg", "ekg", "midline"),
+    );
+  });
+});
+
+describe("audible scrub", () => {
+  it("keeps preview grains centered, directional, and inside the recording", () => {
+    assert.equal(scrubPreviewTime(1, 0, 0, 4, 2), 1);
+    assert.ok(scrubPreviewTime(1, 1, 1, 4, 2) > 1);
+    assert.ok(scrubPreviewTime(1, -1, 1, 4, 2) < 1);
+    assert.equal(scrubPreviewTime(0.01, -1, 1, 4, 2), 0);
+    assert.equal(scrubPreviewTime(1.99, 1, 1, 4, 2), 2);
+  });
+
+  it("can cleanly end before any audio context exists", () => {
+    assert.doesNotThrow(() => new MixerEngine().endScrub());
+  });
+});
+
 describe("mixdown mute/solo", () => {
   it("muted tracks stay silent without shrinking duration", () => {
     const s = sine(10, 8000, 0.1, 0.5);
@@ -481,6 +609,29 @@ describe("polygraphy channel kinds", () => {
     assert.ok(d.some((x) => x.kind === "eog" && x.label === "Lid L"));
     assert.ok(d.some((x) => x.kind === "eog" && x.label === "Lid R"));
     assert.ok(d.filter((x) => x.kind === "eeg").length >= 8);
+  });
+});
+
+describe("review markers", () => {
+  it("does not auto-suggest EKG QRS markers", () => {
+    const samples = new Float32Array(400);
+    for (const beat of [40, 120, 200, 280, 360]) {
+      for (let i = 0; i < 8; i++) samples[beat + i] = 250;
+    }
+    const markers = detectMorphologies([
+      {
+        id: "ekg",
+        label: "EKG",
+        kind: "ekg",
+        laterality: "midline",
+        samples,
+        sampleRate: 200,
+      },
+    ]);
+    assert.equal(
+      markers.some((marker) => marker.type === "qrs"),
+      false,
+    );
   });
 });
 
@@ -602,5 +753,18 @@ describe("spectrum", () => {
     assert.ok(p.alpha > p.delta, `alpha ${p.alpha} delta ${p.delta} peak ${p.peakHz}`);
     assert.ok(p.peakHz > 7 && p.peakHz < 14, `peakHz ${p.peakHz}`);
   });
-});
 
+  it("uses a stable robust dB range for DSA color mapping", () => {
+    const x = new Float32Array(1024);
+    x[10] = 1e6;
+    const frame = buildDsa(
+      [{ id: "L", label: "C3", laterality: "left", kind: "eeg", samples: x, sampleRate: 256 }],
+      4,
+    );
+    assert.ok(frame);
+    assert.ok(frame!.dbMax > frame!.dbMin);
+    assert.ok(frame!.dbMax - frame!.dbMin <= 54.001);
+    assert.equal(dsaUnit(10 ** (frame!.dbMax / 10), frame!.dbMin, frame!.dbMax), 1);
+    assert.ok(Number.isFinite(dsaDb(0)));
+  });
+});
