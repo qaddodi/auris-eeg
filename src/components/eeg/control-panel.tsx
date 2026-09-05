@@ -3,17 +3,14 @@
 import { useRef } from "react";
 import { ChevronDown, Headphones, SlidersHorizontal, Upload } from "lucide-react";
 import {
-  COMPRESSION_PRESETS,
-  ROOT_NOTES,
   SENSITIVITY_PRESETS,
   TIME_SCALE_PRESETS,
   MIN_SENSITIVITY_UV,
   MAX_SENSITIVITY_UV,
 } from "@/lib/eeg/defaults";
-import { describeMapping } from "@/lib/eeg/sonify";
-import { SCALE_LABELS } from "@/lib/eeg/musify";
 import { STANDARD_ELECTRODES } from "@/lib/eeg/montages";
 import { sampleRateSummary } from "@/lib/eeg/edf";
+import { buildSyntheticEdf } from "@/lib/eeg/synthetic";
 import { VIEW_PRESETS } from "@/lib/eeg/view";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -22,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { MixerStrip } from "./mixer-strip";
 import { EventList } from "./event-list";
 import { useEegStore, currentRepro } from "@/store/eeg-store";
-import type { MontageKind, ScaleName } from "@/lib/eeg/types";
+import type { MontageKind, SonifyMode } from "@/lib/eeg/types";
 
 const field =
   "h-8 w-full rounded-sm bg-bg px-2 text-sm text-fg shadow-border outline-none focus:ring-2 focus:ring-accent/50";
@@ -44,6 +41,10 @@ export function ControlPanel() {
   const setFilters = useEegStore((s) => s.setFilters);
   const sonify = useEegStore((s) => s.sonify);
   const setSonify = useEegStore((s) => s.setSonify);
+  const soundMode = useEegStore((s) => s.soundMode);
+  const evidencePreparation = useEegStore((s) => s.evidencePreparation);
+  const evidenceReason = useEegStore((s) => s.evidenceReason);
+  const exportMappingAudit = useEegStore((s) => s.exportMappingAudit);
   const negativeUp = useEegStore((s) => s.negativeUp);
   const setNegativeUp = useEegStore((s) => s.setNegativeUp);
   const sensitivityUv = useEegStore((s) => s.sensitivityUv);
@@ -103,10 +104,7 @@ export function ControlPanel() {
               size="sm"
               variant="secondary"
               onClick={async () => {
-                const res = await fetch(`${import.meta.env.BASE_URL}sample.edf`);
-                if (!res.ok) return;
-                const buf = await res.arrayBuffer();
-                await loadFile(buf, "demo-deidentified.edf");
+                await loadFile(buildSyntheticEdf({ duration: 60 }), "synthetic-training.edf");
               }}
             >
               Load demo
@@ -352,110 +350,123 @@ export function ControlPanel() {
       <Separator />
 
       <section className="space-y-3 p-4">
-        <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-subtle">Listen</p>
-        <p className="text-pretty text-xs text-muted">
-          Contour: up on the graph raises pitch. Pen: analog paper scratch — fast deflections hiss,
-          still baseline is quiet. Pulse: count the rhythm. Ambient: smoothed delta–beta power
-          becomes a restrained harmonic bed. Choir is the just-intonation 1/f version. Piano is a
-          restrained scale voice with transient accents. Direct is the raw wave. Playback starts at
-          a fixed safe level; per-track gain is in Extra tools.
-        </p>
-        <Label>Scale</Label>
-        <div className="grid grid-cols-2 gap-1.5">
-          {(Object.keys(SCALE_LABELS) as ScaleName[]).map((id) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setSonify({ scale: id })}
-              className={`h-8 rounded-sm px-2 text-left text-xs ${
-                sonify.scale === id ? "bg-accent text-accent-fg" : "bg-bg text-muted shadow-border"
-              }`}
-            >
-              {SCALE_LABELS[id]}
-            </button>
-          ))}
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-subtle">
+            Sonification
+          </p>
+          <Badge
+            tone={
+              soundMode === "evidence"
+                ? "accent"
+                : soundMode === "hybrid" || soundMode === "experimental" || soundMode === "musical"
+                  ? "warn"
+                  : "muted"
+            }
+          >
+            {soundMode === "evidence"
+              ? "Study reproduction · B"
+              : soundMode === "hybrid"
+                ? "Hybrid · B + style"
+                : soundMode === "experimental" || soundMode === "musical"
+                  ? "Experimental · X"
+                  : "Sound off"}
+          </Badge>
         </div>
-        <Label>Root</Label>
-        <div className="flex flex-wrap gap-1">
-          {ROOT_NOTES.map((n) => (
-            <button
-              key={n.midi}
-              type="button"
-              onClick={() => setSonify({ rootMidi: n.midi })}
-              className={`h-7 rounded-full px-2.5 text-xs ${
-                sonify.rootMidi === n.midi
-                  ? "bg-accent text-accent-fg"
-                  : "bg-bg text-muted shadow-border"
-              }`}
-            >
-              {n.label}
-            </button>
-          ))}
-        </div>
-        <label className="flex items-center justify-between text-sm">
-          Snap to scale
-          <input
-            type="checkbox"
-            checked={sonify.quantize}
-            onChange={(e) => setSonify({ quantize: e.target.checked })}
-            className="size-4 accent-accent"
-          />
-        </label>
-        <Label>Pitch range ±{sonify.rangeSemitones} st</Label>
-        <input
-          type="range"
-          min={4}
-          max={12}
-          step={1}
-          value={sonify.rangeSemitones}
-          onChange={(e) => setSonify({ rangeSemitones: Number(e.target.value) })}
-          className="w-full accent-accent"
-        />
-        {sonify.mode === "direct" ? (
+        {soundMode === "off" ? (
+          <p className="text-pretty text-xs leading-5 text-muted">
+            Visual review is independent of audio. Select a sound mode in the header when you want
+            an auditory representation.
+          </p>
+        ) : soundMode === "evidence" || soundMode === "hybrid" ? (
           <>
-            <Label>Time compression</Label>
-            <div className="flex flex-wrap gap-1">
-              {COMPRESSION_PRESETS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setSonify({ compression: c })}
-                  className={`h-7 rounded-full px-2.5 text-xs tabular-nums ${
-                    sonify.compression === c
-                      ? "bg-accent text-accent-fg"
-                      : "bg-bg text-muted shadow-border"
-                  }`}
-                >
-                  {c}×
-                </button>
-              ))}
+            <div className="rounded-md border border-border bg-bg p-3">
+              <p className="text-xs font-medium text-fg">
+                Loui 2014 · Fz–Cz study reproduction
+              </p>
+              <p className="mt-1 text-pretty text-xs leading-5 text-muted">
+                Level B. A 10-second Fz–Cz epoch is sampled every 20 points at 256 Hz,
+                linearly scaled to 1–40, and mapped to C-major-pentatonic pitch at 12.8
+                events/s. Realtime pages are anchored in successive 10-second epochs; the export
+                uses the selected 10-second epoch. This reproduces the disclosed symbolic mapping,
+                not clinical validity.
+              </p>
+              {soundMode === "hybrid" && (
+                <p className="mt-2 text-pretty text-xs leading-5 text-warn">
+                  Hybrid adds a softer second-harmonic style after mapping. Pitch and event timing
+                  remain unchanged.
+                </p>
+              )}
             </div>
-            <p className="text-[0.6875rem] text-pretty text-subtle">
-              {describeMapping(sonify.compression)}
-            </p>
+            {evidencePreparation ? (
+              <p className="text-xs text-muted">
+                Ready · Fz–Cz
+                {evidencePreparation.resampled
+                  ? ` · linearly resampled ${evidencePreparation.sourceSampleRate}→256 Hz`
+                  : " · native 256 Hz"}
+              </p>
+            ) : (
+              <p className="rounded-md border border-warn/40 bg-warn/10 p-2 text-xs text-warn">
+                {evidenceReason ?? "Compatible Fz and Cz channels are required."}
+              </p>
+            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={exportMappingAudit}
+              disabled={!recording || !evidencePreparation}
+            >
+              Export mapping audit
+            </Button>
           </>
         ) : (
           <>
-            <Label>Time {sonify.timeScale}×</Label>
-            <div className="flex flex-wrap gap-1">
-              {TIME_SCALE_PRESETS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setSonify({ timeScale: c })}
-                  className={`h-7 rounded-full px-2.5 text-xs tabular-nums ${
-                    sonify.timeScale === c
-                      ? "bg-accent text-accent-fg"
-                      : "bg-bg text-muted shadow-border"
-                  }`}
-                >
-                  {c}×
-                </button>
-              ))}
-            </div>
-            <p className="text-[0.6875rem] text-pretty text-subtle">
-              1× is clinical time. Solo one chain to hear a single contour clearly.
+            <p className="text-pretty text-xs leading-5 text-muted">
+              These mappings support listening and exploration. They have not been validated for
+              diagnosis or clinical benefit. Display filters and polarity do not alter their input.
             </p>
+            {soundMode === "experimental" ? (
+              <>
+                <Label>Mapping</Label>
+                <select
+                  className={field}
+                  value={sonify.mode}
+                  onChange={(event) => setSonify({ mode: event.target.value as SonifyMode })}
+                >
+                  <option value="contour">Contour events · auris:contour-v1</option>
+                  <option value="pulse">RMS pulse events · auris:rms-pulse-v1</option>
+                </select>
+              </>
+            ) : (
+              <div className="rounded-md bg-bg p-3 shadow-border">
+                <p className="text-xs font-medium text-fg">Contour events + pentatonic style</p>
+                <p className="mt-1 text-pretty text-[0.6875rem] leading-5 text-subtle">
+                  auris:contour-v1@1.0.0 with the fixed C-major pentatonic-v1@1.0.0 style.
+                </p>
+              </div>
+            )}
+            <Label>Realtime preview speed</Label>
+            <select
+              className={field}
+              value={sonify.timeScale}
+              onChange={(event) => setSonify({ timeScale: Number(event.target.value) })}
+            >
+              {TIME_SCALE_PRESETS.map((value) => (
+                <option key={value} value={value}>
+                  {value}×
+                </option>
+              ))}
+            </select>
+            <p className="text-pretty text-[0.6875rem] leading-5 text-subtle">
+              The mapped WAV and audit preserve the source timeline at 1×.
+            </p>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={exportMappingAudit}
+              disabled={!recording}
+            >
+              Export mapping audit
+            </Button>
           </>
         )}
       </section>
@@ -465,7 +476,8 @@ export function ControlPanel() {
       <section className="space-y-3 p-4">
         <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-subtle">Filters</p>
         <p className="text-xs text-pretty text-muted">
-          LFF / HFF / Notch live on the review bar (Natus-style). DC is removed by default.
+          These settings affect the visual trace only. Analysis and sonification use separately
+          documented preprocessing.
         </p>
         <label className="flex items-center justify-between text-sm">
           Remove DC
@@ -487,7 +499,9 @@ export function ControlPanel() {
             <span className="flex-1">
               <span className="block text-sm font-medium text-fg">Extra tools</span>
               <span className="block text-[0.6875rem] text-subtle">
-                Mixer, channel gain, and scrub audio
+                {soundMode === "evidence" || soundMode === "hybrid"
+                  ? "Locked Fz–Cz source and mapping controls"
+                  : "Mixer, channel gain, and scrub audio"}
               </span>
             </span>
             <ChevronDown
@@ -496,38 +510,47 @@ export function ControlPanel() {
             />
           </summary>
           <div className="space-y-4 border-t border-border px-3 py-3">
-            <div className="space-y-2">
-              <div>
-                <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-subtle">
-                  Mixer
-                </p>
-                <p className="mt-1 text-pretty text-xs text-muted">
-                  S = solo, M = mute. Double-click S for an exclusive solo. Track gains stay live
-                  during playback.
-                </p>
+            {soundMode === "evidence" || soundMode === "hybrid" ? (
+              <div className="rounded-md border border-border bg-surface p-3 text-xs leading-5 text-muted">
+                Evidence source is locked to raw Fz–Cz. Mixer gain, mute, solo, pan, and audible
+                scrubbing are disabled so they cannot silently alter the study mapping.
               </div>
-              <MixerStrip />
-            </div>
-            <div className="border-t border-border pt-3">
-              <label className="flex min-h-11 items-center gap-3 text-sm text-fg">
-                <span className="grid size-8 shrink-0 place-items-center rounded-sm bg-surface-2 text-accent">
-                  <Headphones className="size-4" aria-hidden="true" />
-                </span>
-                <span className="flex-1">
-                  <span className="block font-medium">Audible scrubbing</span>
-                  <span className="block text-[0.6875rem] text-subtle">
-                    Hear a short preview while dragging the tracing
-                  </span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={audibleScrub}
-                  onChange={(e) => setAudibleScrub(e.target.checked)}
-                  className="size-4 accent-accent"
-                  aria-label="Enable audible scrubbing"
-                />
-              </label>
-            </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-subtle">
+                      Mixer
+                    </p>
+                    <p className="mt-1 text-pretty text-xs text-muted">
+                      S = solo, M = mute. Double-click S for an exclusive solo. Track gains stay
+                      live during playback.
+                    </p>
+                  </div>
+                  <MixerStrip />
+                </div>
+                <div className="border-t border-border pt-3">
+                  <label className="flex min-h-11 items-center gap-3 text-sm text-fg">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-sm bg-surface-2 text-accent">
+                      <Headphones className="size-4" aria-hidden="true" />
+                    </span>
+                    <span className="flex-1">
+                      <span className="block font-medium">Audible scrubbing</span>
+                      <span className="block text-[0.6875rem] text-subtle">
+                        Hear a short preview while dragging the tracing
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={audibleScrub}
+                      onChange={(e) => setAudibleScrub(e.target.checked)}
+                      className="size-4 accent-accent"
+                      aria-label="Enable audible scrubbing"
+                    />
+                  </label>
+                </div>
+              </>
+            )}
           </div>
         </details>
       </section>
@@ -543,7 +566,11 @@ export function ControlPanel() {
             {formatRepro(repro)}
           </pre>
         ) : (
-          <p className="text-xs text-subtle">Load a recording to capture settings.</p>
+          <p className="text-xs text-subtle">
+            {recording
+              ? "Choose a sound mode to generate a versioned mapping record."
+              : "Load a recording to capture settings."}
+          </p>
         )}
         {status === "ready" && <Badge tone="accent">Local only</Badge>}
       </section>

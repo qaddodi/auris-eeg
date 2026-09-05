@@ -39,6 +39,10 @@ export function processSegment(
   const rec = readRecords(recording.buffer, recording.header, start, duration);
   const available = derivations.filter((d) => d.available);
   const tracks: ProcessedTrack[] = available.map((d) => {
+    const sourceRates = d.sources.map((index) => recording.header.signals[index]?.sampleRate);
+    if (sourceRates.some((rate) => rate == null || rate !== d.sampleRate)) {
+      throw new Error(`Cannot process ${d.label}: derivation source rates do not match.`);
+    }
     const raw = applyDerivation(rec.samples, d);
     const filtered = applyFilters(raw, d.sampleRate, filters);
     return {

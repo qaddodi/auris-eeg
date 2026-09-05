@@ -4,7 +4,16 @@ export type ChannelKind = "eeg" | "ekg" | "eog" | "emg" | "extra" | "dc" | "othe
 
 export type MontageKind = "original" | "double-banana" | "transverse" | "custom";
 
-export type SonifyMode = "contour" | "ambient" | "choir" | "pulse" | "direct" | "piano" | "pen";
+export type SonifyMode =
+  | "contour"
+  | "ambient"
+  | "choir"
+  | "pulse"
+  | "direct"
+  | "piano"
+  | "pen"
+  | "loui"
+  | "loui-hybrid";
 
 export type ScaleName = "pentatonic" | "dorian" | "harmonic" | "major";
 

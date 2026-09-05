@@ -21,6 +21,11 @@ import { renderInstallPage } from "./grok-pwa-plugin.mjs";
 
 const TEMPLATE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+// Keep helper calls that rely on process.cwd() independent from this checkout's
+// real branding assets. Production code still defaults to its actual cwd.
+const TEST_ROOT = mkdtempSync(join(tmpdir(), "grok-pwa-plugin-test-"));
+process.chdir(TEST_ROOT);
+
 test("injects before </head>", () => {
   const out = injectGrokPwaHead("<html><head><title>x</title></head><body></body></html>");
   assert.match(out, /rel="manifest"/);
@@ -503,4 +508,3 @@ test("vite plugin bakes og identity as a virtual module", () => {
   assert.match(plugin, /virtual:grok-og-identity/);
   assert.match(plugin, /snapshotOgIdentity/);
 });
-

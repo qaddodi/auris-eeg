@@ -75,14 +75,19 @@ function parseSignalHeaders(buffer: ArrayBuffer, nsig: number): EdfSignal[] {
   return signals;
 }
 
+function requireFiniteField(value: number, field: string, signal?: number): void {
+  if (!Number.isFinite(value)) {
+    const suffix = signal == null ? "" : ` for signal ${signal + 1}`;
+    throw new Error(`EDF ${field}${suffix} is missing or invalid.`);
+  }
+}
+
 export function parseEdfHeader(buffer: ArrayBuffer): EdfHeader {
   if (buffer.byteLength < 256) {
     throw new Error("File is too small to be an EDF/EDF+ recording.");
   }
   const version = ascii(buffer, 0, 8);
-  if (version !== "0" && version !== "") {
-    // Some writers leave version as "0       "
-  }
+  if (version !== "0") throw new Error("Unsupported EDF version (expected version 0).");
   const patient = ascii(buffer, 8, 80);
   const recording = ascii(buffer, 88, 80);
   const startDate = ascii(buffer, 168, 8);
@@ -96,27 +101,53 @@ export function parseEdfHeader(buffer: ArrayBuffer): EdfHeader {
   if (!Number.isFinite(nsig) || nsig < 1 || nsig > 512) {
     throw new Error("This file does not look like a valid EDF header (signal count).");
   }
-  if (!Number.isFinite(headerBytes) || headerBytes < 256 + nsig * 256) {
+  if (!Number.isInteger(headerBytes) || headerBytes !== 256 + nsig * 256) {
     throw new Error("EDF header size does not match the signal count.");
+  }
+  if (buffer.byteLength < headerBytes) {
+    throw new Error("EDF file is truncated in the signal header.");
   }
   if (!Number.isFinite(recordDuration) || recordDuration <= 0) {
     throw new Error("EDF record duration is missing or invalid.");
   }
-  if (!Number.isFinite(recordCount) || recordCount < 1) {
-    throw new Error("EDF has no data records.");
+  if (!Number.isInteger(recordCount) || recordCount < -1 || recordCount === 0) {
+    throw new Error("EDF data-record count is invalid.");
   }
 
   const signals = parseSignalHeaders(buffer, nsig);
   for (const s of signals) {
+    requireFiniteField(s.physicalMin, "physical minimum", s.index);
+    requireFiniteField(s.physicalMax, "physical maximum", s.index);
+    requireFiniteField(s.digitalMin, "digital minimum", s.index);
+    requireFiniteField(s.digitalMax, "digital maximum", s.index);
+    if (!Number.isInteger(s.digitalMin) || !Number.isInteger(s.digitalMax) ||
+        s.digitalMin < -32768 || s.digitalMin > 32767 ||
+        s.digitalMax < -32768 || s.digitalMax > 32767) {
+      throw new Error(`EDF digital calibration is outside the signed 16-bit range for signal ${s.index + 1}.`);
+    }
+    if (s.physicalMin === s.physicalMax || s.digitalMin === s.digitalMax) {
+      throw new Error(`EDF calibration range is zero for signal ${s.index + 1}.`);
+    }
+    if (!Number.isInteger(s.samplesPerRecord) || s.samplesPerRecord < 1) {
+      throw new Error(`EDF samples per record is invalid for signal ${s.index + 1}.`);
+    }
     s.sampleRate = s.samplesPerRecord / recordDuration;
   }
   const bytesPerRecord = signals.reduce((a, s) => a + s.samplesPerRecord * 2, 0);
-  const expected = headerBytes + recordCount * bytesPerRecord;
-  if (buffer.byteLength < headerBytes + bytesPerRecord) {
-    throw new Error("EDF file is truncated before the first data record.");
+  const payloadBytes = buffer.byteLength - headerBytes;
+  if (payloadBytes < 0 || payloadBytes % bytesPerRecord !== 0) {
+    throw new Error("EDF data section contains a truncated or partial data record.");
   }
-  if (buffer.byteLength < expected - bytesPerRecord) {
-    // Allow a slightly short last record rather than hard-failing.
+  const completeRecords = payloadBytes / bytesPerRecord;
+  const resolvedRecordCount = recordCount === -1 ? completeRecords : recordCount;
+  if (resolvedRecordCount < 1) {
+    throw new Error("EDF has no complete data records.");
+  }
+  if (resolvedRecordCount !== completeRecords) {
+    throw new Error("EDF data-record count does not match the file length.");
+  }
+  if (/^EDF\+D(?:\s|$)/i.test(reserved)) {
+    throw new Error("Discontinuous EDF+D recordings are not supported because gaps cannot be represented safely.");
   }
 
   return {
@@ -126,9 +157,9 @@ export function parseEdfHeader(buffer: ArrayBuffer): EdfHeader {
     startTime,
     headerBytes,
     reserved,
-    recordCount,
+    recordCount: resolvedRecordCount,
     recordDuration,
-    duration: recordCount * recordDuration,
+    duration: resolvedRecordCount * recordDuration,
     signals,
     bytesPerRecord,
     isEdfPlus: reserved.toUpperCase().startsWith("EDF+"),
@@ -143,8 +174,17 @@ export function listChannels(header: EdfHeader): ChannelInfo[] {
 
 function physical(s: EdfSignal, digital: number): number {
   const spanD = s.digitalMax - s.digitalMin;
-  if (spanD === 0) return 0;
-  return ((digital - s.digitalMin) / spanD) * (s.physicalMax - s.physicalMin) + s.physicalMin;
+  const calibrated = ((digital - s.digitalMin) / spanD) * (s.physicalMax - s.physicalMin) + s.physicalMin;
+  // The rest of the EEG pipeline and its sensitivity controls use microvolts.
+  const unit = s.unit.trim().toLowerCase().replace("μ", "µ");
+  const kind = describeChannel(s.index, s.label, s.unit, s.sampleRate).kind;
+  if (kind === "eeg" || kind === "eog" || kind === "emg" || kind === "ekg") {
+    if (unit === "v") return calibrated * 1e6;
+    if (unit === "mv") return calibrated * 1e3;
+    if (unit === "uv" || unit === "µv") return calibrated;
+    if (unit === "nv") return calibrated * 1e-3;
+  }
+  return calibrated;
 }
 
 export function readRecords(
@@ -199,10 +239,8 @@ export function readRecords(
   };
 }
 
-function parseTals(bytes: Uint8Array, recordOrigin: number): EdfAnnotation[] {
-  const text = Array.from(bytes)
-    .map((b) => (b === 0 ? "\0" : String.fromCharCode(b)))
-    .join("");
+function parseTals(bytes: Uint8Array): EdfAnnotation[] {
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   const out: EdfAnnotation[] = [];
   const chunks = text.split("\0").filter(Boolean);
   for (const chunk of chunks) {
@@ -211,15 +249,24 @@ function parseTals(bytes: Uint8Array, recordOrigin: number): EdfAnnotation[] {
     if (!parts[0]) continue;
     const head = parts[0];
     const durSplit = head.split("\x15");
+    if (durSplit.length > 2 || !/^[+-](?:\d+(?:\.\d*)?|\.\d+)$/.test(durSplit[0]!)) {
+      throw new Error("EDF+ annotation onset is invalid.");
+    }
     const onset = Number(durSplit[0]);
-    if (!Number.isFinite(onset)) continue;
+    if (!Number.isFinite(onset)) throw new Error("EDF+ annotation onset is invalid.");
+    if (durSplit[1] != null && durSplit[1] !== "" && !/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(durSplit[1])) {
+      throw new Error("EDF+ annotation duration is invalid.");
+    }
     const duration = durSplit[1] != null && durSplit[1] !== "" ? Number(durSplit[1]) : null;
+    if (duration != null && (!Number.isFinite(duration) || duration < 0)) {
+      throw new Error("EDF+ annotation duration is invalid.");
+    }
     const anns = parts.slice(1).map((s) => s.replace(/\0/g, "").trim()).filter(Boolean);
     if (anns.length === 0) {
-      out.push({ onset: recordOrigin + onset, duration, text: "" });
+      out.push({ onset, duration, text: "" });
     } else {
       for (const a of anns) {
-        out.push({ onset: recordOrigin + onset, duration, text: a });
+        out.push({ onset, duration, text: a });
       }
     }
   }
@@ -227,9 +274,8 @@ function parseTals(bytes: Uint8Array, recordOrigin: number): EdfAnnotation[] {
 }
 
 export function readAnnotations(buffer: ArrayBuffer, header: EdfHeader): EdfAnnotation[] {
-  const idx = header.signals.findIndex((s) => s.isAnnotation);
-  if (idx < 0) return [];
-  const sig = header.signals[idx]!;
+  const annotationIndexes = header.signals.flatMap((s, index) => s.isAnnotation ? [index] : []);
+  if (annotationIndexes.length === 0) return [];
   const view = new DataView(buffer);
   const offsets: number[] = [];
   let run = 0;
@@ -241,16 +287,17 @@ export function readAnnotations(buffer: ArrayBuffer, header: EdfHeader): EdfAnno
   const nRec = header.recordCount;
   for (let r = 0; r < nRec; r++) {
     const recOff = header.headerBytes + r * header.bytesPerRecord;
-    if (recOff + header.bytesPerRecord > buffer.byteLength) break;
-    const base = recOff + offsets[idx]!;
-    const bytes = new Uint8Array(sig.samplesPerRecord * 2);
-    for (let i = 0; i < sig.samplesPerRecord; i++) {
-      const v = view.getInt16(base + i * 2, true);
-      bytes[i * 2] = v & 0xff;
-      bytes[i * 2 + 1] = (v >> 8) & 0xff;
+    for (const idx of annotationIndexes) {
+      const sig = header.signals[idx]!;
+      const base = recOff + offsets[idx]!;
+      const bytes = new Uint8Array(sig.samplesPerRecord * 2);
+      for (let i = 0; i < sig.samplesPerRecord; i++) {
+        const v = view.getInt16(base + i * 2, true);
+        bytes[i * 2] = v & 0xff;
+        bytes[i * 2 + 1] = (v >> 8) & 0xff;
+      }
+      out.push(...parseTals(bytes));
     }
-    const origin = r * header.recordDuration;
-    out.push(...parseTals(bytes, origin));
   }
   return out.filter((a) => a.text);
 }
@@ -258,12 +305,7 @@ export function readAnnotations(buffer: ArrayBuffer, header: EdfHeader): EdfAnno
 export async function loadRecording(file: File | ArrayBuffer, name: string): Promise<LoadedRecording> {
   const buffer = file instanceof ArrayBuffer ? file : await file.arrayBuffer();
   const header = parseEdfHeader(buffer);
-  let annotations: EdfAnnotation[] = [];
-  try {
-    annotations = readAnnotations(buffer, header);
-  } catch {
-    annotations = [];
-  }
+  const annotations = readAnnotations(buffer, header);
   return { name, header, buffer, annotations };
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
-import { Info, Keyboard, PanelLeft } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { Expand, Info, Keyboard, PanelLeft, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ControlPanel } from "./control-panel";
 import { Transport } from "./transport";
@@ -9,6 +9,7 @@ import { WaveformView } from "./waveform-view";
 import { ReviewBar } from "./review-bar";
 import { useEditorKeys } from "./use-editor-keys";
 import { SHORTCUTS } from "@/lib/eeg/shortcuts";
+import { buildSyntheticEdf } from "@/lib/eeg/synthetic";
 import { useEegStore } from "@/store/eeg-store";
 
 export function Workstation() {
@@ -19,20 +20,24 @@ export function Workstation() {
   const setKeysOpen = useEegStore((s) => s.setKeysOpen);
   const loadFile = useEegStore((s) => s.loadFile);
   const status = useEegStore((s) => s.status);
+  const soundMode = useEegStore((s) => s.soundMode);
+  const setSoundMode = useEegStore((s) => s.setSoundMode);
+  const evidencePreparation = useEegStore((s) => s.evidencePreparation);
+  const evidenceReason = useEegStore((s) => s.evidenceReason);
+  const demoStarted = useRef(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   useEditorKeys();
 
   useEffect(() => {
-    if (status !== "idle") return;
+    if (status !== "idle" || demoStarted.current) return;
+    demoStarted.current = true;
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${import.meta.env.BASE_URL}sample.edf`);
-        if (!res.ok || cancelled) return;
-        const buf = await res.arrayBuffer();
-        if (cancelled) return;
-        await loadFile(buf, "demo-deidentified.edf");
+        const buffer = buildSyntheticEdf({ duration: 60 });
+        if (!cancelled) await loadFile(buffer, "synthetic-demo.edf");
       } catch {
-        /* demo optional */
+        /* The editor remains ready for a local EDF if a demo cannot initialize. */
       }
     })();
     return () => {
@@ -40,9 +45,27 @@ export function Workstation() {
     };
   }, [loadFile, status]);
 
+  const onFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (file) void loadFile(file, file.name);
+  };
+
+  const soundStatus = {
+    off: "Visual review at 1× · sound off",
+    evidence: evidencePreparation
+      ? "Loui 2014 study reproduction · Level B"
+      : (evidenceReason ?? "Fz–Cz required"),
+    hybrid: evidencePreparation
+      ? "Loui 2014 mapping + disclosed soft style"
+      : (evidenceReason ?? "Fz–Cz required"),
+    experimental: "Experimental contour mapping active",
+    musical: "Musical mapping active",
+  }[soundMode];
+
   return (
     <div className="flex h-dvh min-h-0 flex-col bg-bg text-fg">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">
+      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2">
         <Button
           size="icon"
           variant="ghost"
@@ -63,9 +86,41 @@ export function Workstation() {
             <span className="hidden text-xs text-muted sm:inline">EEG sonification</span>
           </div>
         </div>
-        <p className="hidden max-w-xl truncate text-xs text-subtle md:block">
-          Educational aid — not a medical device. No seizure detection. Processing is local.
-        </p>
+        <div className="order-last flex w-full items-center gap-2 sm:order-none sm:w-auto">
+          <label className="sr-only" htmlFor="sound-mode">
+            Sound mode
+          </label>
+          <select
+            id="sound-mode"
+            value={soundMode}
+            onChange={(event) => setSoundMode(event.currentTarget.value as typeof soundMode)}
+            className="h-8 rounded-sm border border-border bg-bg px-2 text-xs font-medium text-fg outline-none focus:border-accent"
+          >
+            <option value="off">Sound off</option>
+            <option value="evidence">Evidence</option>
+            <option value="hybrid">Hybrid</option>
+            <option value="experimental">Experimental</option>
+            <option value="musical">Musical</option>
+          </select>
+          <p className="min-w-0 truncate text-xs text-muted" aria-live="polite">
+            {soundStatus}
+          </p>
+        </div>
+        <input ref={fileRef} type="file" accept=".edf,.EDF" className="sr-only" onChange={onFile} />
+        <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()}>
+          <Upload /> <span className="hidden sm:inline">Open EDF</span>
+        </Button>
+        <Button
+          size="icon"
+          variant="ghost"
+          aria-label="Toggle fullscreen"
+          onClick={() => {
+            if (!document.fullscreenElement) void document.documentElement.requestFullscreen?.();
+            else void document.exitFullscreen?.();
+          }}
+        >
+          <Expand />
+        </Button>
         <Button
           size="icon"
           variant="ghost"
@@ -103,28 +158,23 @@ export function Workstation() {
         <Modal title="About Auris" onClose={() => setAboutOpen(false)}>
           <div className="space-y-3 text-pretty text-sm leading-relaxed text-muted">
             <p>
-              Auris is a local EEG review + listening station. Contour maps the tracing itself: a
-              deflection up on the graph raises pitch. Pen mode (Norata 2023) is the analog paper
-              scratch — pen speed is |dV/dt|, so spikes hiss and isoelectric baseline is almost
-              silent. Choir uses just-intonation partials with 1/f loudness (Wu 2009 scale-free
-              brain-wave music). Piano keeps a scale while the field looks ordinary and leaves it
-              when it does not — educational, not a diagnosis. Ambient maps smoothed delta, theta,
-              alpha, and beta power to a restrained harmonic choir; Piano uses a scale with
-              rate-limited transient accents. Trace colors come from stable channel identity, not
-              zoom or signal density. The DSA strip is a left/right power spectral density view with
-              a fixed robust dB scale. Suggested markers are educational — not a diagnosis. Audible
-              scrubbing previews a short grain under the pointer. Nothing leaves this browser.
+              Auris is a local EEG review workstation for teaching and exploratory listening.
+              Evidence mode contains a Level B reproduction of the disclosed Loui 2014 Fz–Cz
+              symbolic mapping. It is evidence for a bounded listening study, not a validated
+              clinical interpretation. Hybrid applies a disclosed downstream soft timbre while
+              preserving mapped pitch and timing. Experimental and musical modes remain Level X.
+              Trace colors and the DSA display support visual review; suggested markers are
+              educational prompts, not findings.
             </p>
             <p>
-              The strip at the top is the entire recording. The highlighted window is what the
-              editor shows. Playback is continuous across the file; the playhead can follow while
-              you zoom. Mute (M) and solo (S) work like a mixer — any number of tracks can be
-              soloed; muted tracks are silent without stopping the clock.
+              The overview shows the full recording and the highlighted window is the current editor
+              page. In visual mode, playback advances the review cursor at normal EEG time. Files
+              are processed locally in this browser.
             </p>
             <p>
               This is a research and teaching aid, not a diagnostic instrument. It does not detect
-              seizures, mark spikes, or interpret studies. Do not load identifiable recordings.
-              Files never leave this device.
+              seizures or interpret studies. Use deidentified recordings and retain clinical
+              responsibility for any review.
             </p>
           </div>
           <div className="mt-5 flex justify-end">

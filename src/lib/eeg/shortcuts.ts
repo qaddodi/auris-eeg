@@ -27,6 +27,8 @@ export const SHORTCUTS: Shortcut[] = [
   { group: "Review", keys: [",", "<"], action: "Bigger waves (more sensitive)" },
   { group: "Review", keys: [".", ">"], action: "Smaller waves (less sensitive)" },
   { group: "Review", keys: ["Click (annotate)"], action: "Drop a marker" },
+  { group: "Review", keys: ["⌘ / Ctrl", "Z"], action: "Undo annotation change" },
+  { group: "Review", keys: ["⌘ / Ctrl", "Shift", "Z"], action: "Redo annotation change" },
   { group: "Tracks", keys: ["S"], action: "Solo this track (multi-solo)" },
   { group: "Tracks", keys: ["M"], action: "Mute this track" },
   { group: "Tracks", keys: ["Double-click S"], action: "Exclusive solo" },

@@ -46,7 +46,16 @@ export interface ContourOpts {
   quantize: boolean;
   negativeUp: boolean;
   outputRate: number;
-  mode: "contour" | "ambient" | "choir" | "pulse" | "direct" | "piano" | "pen";
+  mode:
+    | "contour"
+    | "ambient"
+    | "choir"
+    | "pulse"
+    | "direct"
+    | "piano"
+    | "pen"
+    | "loui"
+    | "loui-hybrid";
 }
 
 export function settingsToOpts(s: SonifySettings, negativeUp: boolean): ContourOpts {

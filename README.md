@@ -1,105 +1,70 @@
 # Auris
 
-Local EEG sonification workstation. Educational and research aid — **not a medical device**.
+Auris is a client-only EEG review and sonification workstation for education
+and research. It is not a medical device and does not diagnose, classify, or
+alert on seizures.
 
-Auris opens deidentified EDF/EDF+ recordings in the browser, draws every selected derivation in one un-scrolled tracing, and turns those waves into sound. Nothing is uploaded. Files are not stored beyond the session.
+Open a deidentified EDF or EDF+ file in the browser. The file is parsed and
+calibrated locally; no recording is uploaded and annotations are held in the
+current session only. The app can also generate a built-in synthetic tracing.
 
-## What it does
+The current workstation provides:
 
-1. Reads EDF/EDF+ locally (Nihon Kohden / Natus-style exports).
-2. Builds referential, longitudinal bipolar (double banana), transverse, or custom pairs.
-3. Normalizes labels such as `EEG Fp1-REF`, `FP1`, and T3/T7, T4/T8, T5/P7, T6/P8.
-4. Sonifies the **entire recording** continuously:
-   - **Direct** — the tracing itself, time-compressed (20× / 50× / 100× / 200×). At 100×, 10 Hz alpha is about 1 kHz.
-   - **Ambient** — smoothed band power mapped to a restrained harmonic bed.
-   - **Piano** — scale-quantized contour with rate-limited transient accents.
-   - **Pen / Pulse / Choir** — alternate educational mappings.
-5. Maps left electrodes to the left speaker, right to the right, midline centered. Override per track.
-6. Mute and solo (including multiple solos) on every trace, live, like a mixer — playback does not restart.
-7. DAW-style editor: overview of the whole file, a zoomable window, playhead that can follow while you zoom.
-8. Downloads a 16-bit stereo WAV and prints a reproducibility block of every setting.
+- EDF/EDF+ header validation, physical-unit calibration, channel aliases, and
+  referential, longitudinal bipolar, transverse, or custom derivations.
+- An overview plus a zoomable waveform editor, follow transport, calipers,
+  synchronized spectrum/DSA view, montage and filter controls, and mixer mute,
+  solo, gain, and stereo placement.
+- Explicit annotation import/export, user markers, file annotations, and
+  clearly labeled analysis suggestions. Imported annotations are not persisted.
+- A locked Loui et al. (2014) Fz–Cz study-reproduction mapping under
+  `Evidence`, with a separately disclosed downstream style under `Hybrid`.
+  Versioned contour/RMS-pulse mappings remain under `Experimental`, and sound
+  remains off until the user selects a mode.
+- Deterministic event sonification in `src/lib/sonification/` with bounded
+  windows, feature provenance, mapping/style IDs, mapping-audit JSON, and
+  browser-independent PCM rendering for the mapped WAV download.
 
-Review-oriented additions include a stable semantic trace palette, an independently
-normalized EKG display, a robust PSD/dB DSA strip with synchronized cursor, prominent
-annotation/suggestion visibility controls, a top-level Follow transport, a collapsed
-Extra tools mixer, and optional audible scrubbing. EKG normalization is display-only;
-the physical samples and exported audio are unchanged.
+## Data and signal paths
 
-Filtering is optional and explicit (DC, 0.5–70 Hz bandpass, 60 Hz notch). Normalization is a high percentile plus a soft limiter. Short fades only exist to stop edge clicks.
+EDF digital samples are converted to their declared physical units and then to
+internal microvolts for recognized voltage channels. The loaded recording keeps
+the original `ArrayBuffer` and parsed annotations. Derivations and filters
+allocate new arrays. The store retains a calibrated analysis path and a
+separate display path; EKG display normalization is display-only. Realtime
+audio is driven from the analysis path, while the deterministic event core
+records its own filter and source-time provenance.
 
-## Editor
+EDF+D discontinuous recordings, incomplete records, mismatched record counts,
+unsafe calibration, and unequal-rate bipolar pairs are rejected rather than
+silently concatenated or resampled.
 
-- **Overview** (top) — the entire recording. Drag the highlighted window to pan; drag its edges to zoom; click to seek.
-- **Editor** — all channels fitted in the remaining height (no vertical scroll). Wheel zooms around the cursor; Shift+wheel pans; click/drag scrubs.
-- **Follow (F)** — keeps the playhead in the window while sound plays, like a music editor. Manual pan or scrub turns it off so the viewport never fights the user.
-- **S / M** on each lane — solo (multi-solo) and mute. Double-click S for exclusive solo. Faders stay live during playback.
+## Local development
 
-Trace colors are assigned from a stable derivation identity. Zoom, pan, decimation,
-montage order, and signal amplitude do not recolor a channel. EKG uses a full-recording
-median baseline and percentile/peak-envelope scale with an outlier clamp, independent
-of the EEG sensitivity control.
-
-## Keyboard
-
-| Key            | Action                          |
-| -------------- | ------------------------------- |
-| Space          | Play / pause                    |
-| Esc            | Stop                            |
-| L              | Loop                            |
-| F              | Follow playhead                 |
-| Home / End     | Start / end of recording        |
-| ← →            | Skip 1 s (Shift 5 s, Alt 0.2 s) |
-| + / − or ] / [ | Zoom in / out                   |
-| 0              | Show entire recording           |
-| 1–5            | Window 2 / 5 / 10 / 30 / 60 s   |
-| ?              | Shortcut list                   |
-
-## Privacy
-
-- Patient-name and patient-ID header fields are **not shown**.
-- If leftover text looks identifying, a warning appears.
-- Do not load identifiable recordings. Deidentify in Natus (or equivalent) **before** export.
-
-## Natus / Nihon Kohden export notes
-
-- Export raw EEG as EDF or EDF+.
-- Include the EEG channels you need; annotations only if necessary.
-- Apply vendor deidentification, then check patient, recording, annotation, and filename fields.
-- Prefer unfiltered signals. Note the original montage, reference, sampling rate, and filters.
-- Channel labels vary by installation — correct aliases in Auris if a pair does not form.
-
-## Listening
-
-Ambient maps smoothed delta / theta / alpha / beta power onto a restrained harmonic
-choir: slow activity is the low drone, alpha is the central harmonic voice, and faster
-activity adds quieter upper roles. Piano uses a configurable scale, compressed amplitude,
-pitch hysteresis, and a minimum note interval so transient accents do not chatter. Direct
-is the raw wave sped up — solo one or two chains or it is hiss. Audible scrubbing uses
-short tapered grains around the pointer, rate-limited to prevent overlapping bursts.
-
-Every EEG chain, plus **EKG** (X1–X2) and **lids** (PG1/PG2 / EOG), has Mute and Solo in the mixer and on the lane. Several tracks can be soloed at once.
-
-## Limits
-
-Auris does not detect seizures, mark spikes, or interpret EEG. Ambient, piano, choir, and
-scale are musical readings of band power and frequency, not diagnoses. Direct mode is a
-sped-up waveform, not “what the brain sounds like.”
-
-## Review workflow scope
-
-Implemented: quick montage and filter access, sensitivity/timebase controls, caliper
-measurement, channel labels with M/S state, event navigation, keyboard shortcuts,
-page-forward/page-back review, synchronized cursor values, stable DSA navigation, and
-compact recording status in the transport. Deferred: persistent study/session storage,
-formal bad-channel annotations, annotation editing dialogs, impedance display, and
-clinical report/export formats; those need a larger data model than this local teaching aid.
-
-## Development
-
-```
+```sh
 npm install
 npm run dev
 npm test
+npm run typecheck
+npm run build:pages
+npm run preview:pages
 ```
 
-Tests cover channel aliases, EKG/lid classification, montage subtraction, missing electrodes, independent EKG display gain, stable trace colors, time-compression frequency mapping, choir/scale duration, stereo assignment, clipping/NaNs, synthetic morphologies (alpha, 3 Hz spike-and-wave-like, burst suppression, chirp, muscle, transients), editor zoom/follow, DSA PSD/robust dB scaling, audible-scrub bounds/cleanup, and mute mixdown.
+The development server listens on `0.0.0.0:8080`; the Pages preview uses
+`127.0.0.1:4173`. `npm test` runs the JavaScript script tests and all
+TypeScript tests under `src/lib/app-data`, `src/lib/auth`, `src/lib/eeg`, and
+`src/lib/sonification`. GitHub Pages deployment is defined in
+`.github/workflows/deploy-pages.yml` and builds the static `dist` directory.
+
+## Privacy and limits
+
+Use vendor tooling to deidentify files before opening them. Auris hides common
+patient and recording identifiers in the UI and warns on suspicious header
+text, but a local browser tool is not a deidentification guarantee. Do not add
+network upload, durable recording storage, or clinical report claims without a
+new product decision and review.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/EEG_READER.md](docs/EEG_READER.md),
+[docs/SONIFICATION_ARCHITECTURE.md](docs/SONIFICATION_ARCHITECTURE.md), and
+[research/EVIDENCE.md](research/EVIDENCE.md) for implementation and evidence
+boundaries.

@@ -713,7 +713,7 @@ function drawEditor(
 
   const step = niceStep(span);
   const t0 = Math.ceil(viewStart / step) * step;
-  ctx.font = "500 10px 'IBM Plex Mono', ui-monospace, monospace";
+  ctx.font = "500 10px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
   ctx.fillStyle = "#8b919c";
   ctx.textBaseline = "middle";
   for (let t = t0; t <= viewEnd + 1e-6; t += step) {
@@ -794,7 +794,7 @@ function drawEditor(
     ctx.lineTo(x - 6, mid + half);
     ctx.stroke();
     ctx.fillStyle = "#8b919c";
-    ctx.font = "500 9px 'IBM Plex Mono', ui-monospace, monospace";
+    ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     ctx.fillText(`${s.sensitivityUv} µV`, x - 8, mid);
@@ -852,7 +852,7 @@ function drawEditorOverlay(
     ctx.lineTo(xb, cssH);
     ctx.stroke();
     ctx.fillStyle = "#d7dde6";
-    ctx.font = "500 11px 'IBM Plex Mono', ui-monospace, monospace";
+    ctx.font = "500 11px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
     const dt = Math.abs(caliper.b - caliper.a);
     const hz = dt > 1e-4 ? 1 / dt : 0;
     const label =
@@ -913,7 +913,7 @@ function drawOverviewWaves(
     ctx.globalAlpha = 1;
   });
   ctx.fillStyle = "#5c6370";
-  ctx.font = "500 9px 'IBM Plex Mono', ui-monospace, monospace";
+  ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
   ctx.textBaseline = "bottom";
   const step = niceStep(total);
   for (let tt = 0; tt <= total + 1e-6; tt += step) {
@@ -1019,7 +1019,7 @@ function drawDsa(
   ctx.lineTo(cssW - DSA_RIGHT, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) / 2);
   ctx.stroke();
   ctx.fillStyle = "#8b919c";
-  ctx.font = "500 9px 'IBM Plex Mono', ui-monospace, monospace";
+  ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
   ctx.textBaseline = "middle";
   ctx.fillText("L", 7, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.25);
   ctx.fillText("0", 7, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.5);
@@ -1089,7 +1089,7 @@ function drawDsaOverlay(
   ctx.lineTo(plotX(t), plotTop + plotH);
   ctx.stroke();
   ctx.fillStyle = "rgba(232,234,237,0.9)";
-  ctx.font = "500 9px 'IBM Plex Mono', ui-monospace, monospace";
+  ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
   ctx.textBaseline = "bottom";
   ctx.fillText(
     formatTick(t, viewDur),

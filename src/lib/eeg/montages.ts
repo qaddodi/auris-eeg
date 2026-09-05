@@ -83,6 +83,7 @@ export function auxDerivations(channels: ChannelInfo[]): Derivation[] {
   const extra = channels.filter((c) => c.kind === "extra");
   const out: Derivation[] = [];
   if (ekg.length >= 2) {
+    const sameRate = ekg[0]!.sampleRate === ekg[1]!.sampleRate;
     out.push({
       id: "aux:ekg",
       label: "EKG",
@@ -90,8 +91,8 @@ export function auxDerivations(channels: ChannelInfo[]): Derivation[] {
       laterality: "midline",
       kind: "ekg",
       sampleRate: ekg[0]!.sampleRate,
-      available: true,
-      missing: [],
+      available: sameRate,
+      missing: sameRate ? [] : ["matching sample rates"],
     });
   } else {
     for (const c of ekg) out.push(referential(c, "ekg", auxDisplayLabel("ekg", c.canonical)));
@@ -130,14 +131,16 @@ function buildPairs(
     const missing: string[] = [];
     if (ia == null) missing.push(a);
     if (ib == null) missing.push(b);
-    const available = ia != null && ib != null;
+    const sameRate = ia == null || ib == null || channels.find((c) => c.index === ia)?.sampleRate === channels.find((c) => c.index === ib)?.sampleRate;
+    const available = ia != null && ib != null && sameRate;
+    if (!sameRate) missing.push("matching sample rates");
     return {
       id: `${prefix}:${a}-${b}`,
       label: `${a}–${b}`,
       sources: available ? ([ia, ib] as [number, number]) : ([ia ?? -1, ib ?? -1] as [number, number]),
       laterality: pairLaterality(a, b),
       kind: "eeg" as const,
-      sampleRate: rate,
+      sampleRate: ia == null ? rate : (channels.find((c) => c.index === ia)?.sampleRate ?? rate),
       available,
       missing,
     };
@@ -192,9 +195,11 @@ export function applyDerivation(
   const a = samplesBySignal[der.sources[0]];
   const b = samplesBySignal[der.sources[1]];
   if (!a || !b) return new Float32Array(0);
-  const n = Math.min(a.length, b.length);
-  const out = new Float32Array(n);
-  for (let i = 0; i < n; i++) out[i] = a[i]! - b[i]!;
+  if (a.length !== b.length) {
+    throw new Error(`Cannot derive ${der.label}: source sample counts differ.`);
+  }
+  const out = new Float32Array(a.length);
+  for (let i = 0; i < a.length; i++) out[i] = a[i]! - b[i]!;
   return out;
 }
 

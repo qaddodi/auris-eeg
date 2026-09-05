@@ -40,6 +40,10 @@ export function Transport() {
   const setKeysOpen = useEegStore((s) => s.setKeysOpen);
   const viewDuration = useEegStore((s) => s.viewDuration);
   const sonify = useEegStore((s) => s.sonify);
+  const soundMode = useEegStore((s) => s.soundMode);
+  const evidencePreparation = useEegStore((s) => s.evidencePreparation);
+  const evidenceReason = useEegStore((s) => s.evidenceReason);
+  const playheadEeg = useEegStore((s) => s.playheadEeg);
   const eegRef = useRef<HTMLSpanElement>(null);
   const audioRef = useRef<HTMLSpanElement>(null);
   const hzRef = useRef<HTMLSpanElement>(null);
@@ -50,7 +54,7 @@ export function Transport() {
   useEffect(() => {
     const update = () => {
       const s = useEegStore.getState();
-      const t = eegNow(s);
+      const t = s.playing ? eegNow(s) : s.playheadEeg;
       if (eegRef.current) eegRef.current.textContent = formatTime(t, true);
       if (audioRef.current) audioRef.current.textContent = `${playback.currentTime().toFixed(2)}s`;
       if (!s.segment) return;
@@ -80,9 +84,14 @@ export function Transport() {
     };
     raf = requestAnimationFrame(loopFn);
     return () => cancelAnimationFrame(raf);
-  }, [playing, segment]);
+  }, [playing, playheadEeg, segment]);
 
-  const factor = timeScaleFor(sonify);
+  const soundActive =
+    soundMode === "experimental" ||
+    soundMode === "musical" ||
+    ((soundMode === "evidence" || soundMode === "hybrid") && Boolean(evidencePreparation));
+  const factor =
+    soundMode === "experimental" || soundMode === "musical" ? timeScaleFor(sonify) : 1;
   const total = segment?.duration ?? 0;
   const showingAll = total > 0 && viewDuration >= total - 1e-6;
 
@@ -94,7 +103,7 @@ export function Transport() {
           variant="secondary"
           aria-label={playing ? "Pause" : "Play"}
           onClick={() => void togglePlay()}
-          disabled={!mix || mix.duration <= 0}
+          disabled={!segment}
         >
           {playing ? <Pause /> : <Play className="ml-px" />}
         </Button>
@@ -222,12 +231,16 @@ export function Transport() {
         <span className="hidden sm:inline">
           window <span className="text-fg">{viewDuration.toFixed(viewDuration < 10 ? 1 : 0)}s</span>
         </span>
-        <span className="hidden sm:inline">
-          audio{" "}
-          <span ref={audioRef} className="text-fg">
-            {(mix?.duration ?? 0).toFixed(2)}s
+        {soundActive ? (
+          <span className="hidden sm:inline">
+            audio{" "}
+            <span ref={audioRef} className="text-fg">
+              {(mix?.duration ?? 0).toFixed(2)}s
+            </span>
           </span>
-        </span>
+        ) : (
+          <span className="hidden sm:inline text-subtle">visual</span>
+        )}
         <span>{factor}×</span>
       </div>
       <Button
@@ -238,7 +251,19 @@ export function Transport() {
       >
         <Keyboard />
       </Button>
-      <Button size="sm" variant="secondary" disabled={!segment} onClick={download}>
+      <Button
+        size="sm"
+        variant="secondary"
+        disabled={!segment || !soundActive}
+        title={
+          soundActive
+            ? "Download mapped WAV"
+            : soundMode === "off"
+              ? "Choose a sound mode to enable mapped WAV export"
+              : evidenceReason ?? "This recording is not compatible with the selected sound mode"
+        }
+        onClick={download}
+      >
         <Download /> WAV
       </Button>
     </div>

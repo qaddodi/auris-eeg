@@ -3,9 +3,9 @@
 @source "./";
 
 @theme {
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-sans: "Aptos", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Aptos", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "SF Mono", "Cascadia Mono", Menlo, Consolas, ui-monospace, monospace;
 
   --color-bg: #07080a;
   --color-surface: #101216;
@@ -83,8 +83,20 @@
     accent-color: var(--color-accent);
   }
 
+  select {
+    color-scheme: dark;
+  }
+
   ::selection {
     background: color-mix(in oklab, var(--color-accent) 35%, transparent);
+  }
+}
+
+@media (max-width: 767px) {
+  select,
+  input,
+  button {
+    touch-action: manipulation;
   }
 }
 

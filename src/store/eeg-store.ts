@@ -12,12 +12,22 @@ import {
 import { loadRecording } from "@/lib/eeg/edf";
 import {
   audibleIds,
-  buildRepro,
   controlTracksFrom,
   derivationsFor,
   processSegment,
 } from "@/lib/eeg/pipeline";
-import { detectMorphologies, spikesForTrack } from "@/lib/eeg/patterns";
+import { detectMorphologies } from "@/lib/eeg/patterns";
+import {
+  annotationHistoryRedo,
+  annotationHistoryUndo,
+  validateAnnotations,
+} from "@/lib/eeg/annotations";
+import { generateSession, renderSession } from "@/lib/sonification";
+import {
+  generateLoui2014Session,
+  prepareLoui2014,
+  type Loui2014Preparation,
+} from "@/lib/sonification/loui2014";
 import { buildDsa } from "@/lib/eeg/spectrum";
 import {
   clampView,
@@ -43,6 +53,8 @@ import type {
 } from "@/lib/eeg/types";
 import type { DsaFrame } from "@/lib/eeg/spectrum";
 
+export type SoundMode = "off" | "evidence" | "hybrid" | "experimental" | "musical";
+
 interface SegmentData {
   start: number;
   duration: number;
@@ -60,6 +72,17 @@ export interface AppState {
   derivations: Derivation[];
   tracks: Record<string, TrackState>;
   filters: FilterSettings;
+  analysisSegment: SegmentData | null;
+  evidencePreparation: Loui2014Preparation | null;
+  evidenceReason: string | null;
+  soundMode: SoundMode;
+  setSoundMode: (mode: SoundMode) => void;
+  annotationPast: Annotation[][];
+  annotationFuture: Annotation[][];
+  updateAnnotation: (id: string, patch: Partial<Annotation>) => void;
+  undoAnnotations: () => void;
+  redoAnnotations: () => void;
+  importAnnotations: (annotations: Annotation[]) => void;
   sonify: SonifySettings;
   combine: CombineMode;
   negativeUp: boolean;
@@ -128,6 +151,7 @@ export interface AppState {
   setTool: (t: AppState["tool"]) => void;
   setPendingType: (t: MorphologyType) => void;
   exportAnnotations: () => void;
+  exportMappingAudit: () => void;
   setShowDsa: (v: boolean) => void;
   setAudibleScrub: (v: boolean) => void;
 }
@@ -192,18 +216,52 @@ export const useEegStore = create<AppState>((set, get) => {
   };
 
   const pushEngine = () => {
-    const { segment, tracks, combine, sonify, negativeUp, annotations } = get();
+    const {
+      analysisSegment: segment,
+      evidencePreparation,
+      tracks,
+      combine,
+      sonify,
+      soundMode,
+    } = get();
     if (!segment) {
       playback.setControlTracks([], 0);
       set({ mix: null, busy: false });
       return;
     }
+    const evidenceMode = soundMode === "evidence" || soundMode === "hybrid";
+    playback.setSoundEnabled(
+      soundMode === "experimental" || soundMode === "musical" || (evidenceMode && Boolean(evidencePreparation)),
+    );
+    if (evidenceMode && evidencePreparation) {
+      const evidenceTrack = evidencePreparation.playback;
+      const controls = controlTracksFrom([evidenceTrack], {}, "stereo", {
+        [evidenceTrack.id]: new Float32Array(0),
+      });
+      playback.setControlTracks(controls, segment.duration);
+      playback.setSettings(
+        {
+          ...sonify,
+          mode: soundMode === "hybrid" ? "loui-hybrid" : "loui",
+          timeScale: 1,
+        },
+        true,
+      );
+      set({ mix: stubMix(segment.duration, 1), busy: false });
+      return;
+    }
     const spikes: Record<string, Float32Array> = {};
-    for (const tr of segment.tracks) spikes[tr.id] = spikesForTrack(annotations, tr.id);
+    // Annotations and display polarity are never audio features.
+    for (const tr of segment.tracks) spikes[tr.id] = new Float32Array(0);
     const controls = controlTracksFrom(segment.tracks, tracks, combine, spikes);
     playback.setControlTracks(controls, segment.duration);
-    playback.setSettings(sonify, negativeUp);
-    const ts = sonify.mode === "direct" ? sonify.compression : sonify.timeScale;
+    const enabled = soundMode === "experimental" || soundMode === "musical";
+    playback.setSettings(enabled ? sonify : { ...sonify, mode: "contour", timeScale: 1 }, true);
+    const ts = enabled
+      ? sonify.mode === "direct"
+        ? sonify.compression
+        : sonify.timeScale
+      : 1;
     set({ mix: stubMix(segment.duration, ts), busy: false });
   };
 
@@ -229,7 +287,13 @@ export const useEegStore = create<AppState>((set, get) => {
     const { recording, derivations, filters, viewStart, viewDuration } = get();
     if (!recording) return;
     const total = recording.header.duration;
+    const position = eegNow(get());
+    playback.pause();
+    // Display and analysis/audio are independently derived from the immutable EDF buffer.
+    // A display filter change can therefore never alter analysis or sonification input.
+    const analysis = processSegment(recording, 0, total, derivations, DEFAULT_FILTERS);
     const seg = processSegment(recording, 0, total, derivations, filters);
+    const evidence = evidenceForRecording(recording);
     const view = clampView(
       viewStart,
       viewDuration || Math.min(DEFAULT_VIEW_SEC, total),
@@ -237,9 +301,11 @@ export const useEegStore = create<AppState>((set, get) => {
     );
     // EKG remains available as a trace and manual annotation target, but its
     // heartbeat morphology is intentionally not surfaced as an auto suggestion.
-    const auto = detectMorphologies(seg.tracks).filter((a) => a.type !== "qrs");
-    const fromFile: Annotation[] = recording.annotations.map((a) => ({
-      id: nid(),
+    const auto = get().showAuto
+      ? detectMorphologies(analysis.tracks).filter((a) => a.type !== "qrs")
+      : [];
+    const fromFile: Annotation[] = recording.annotations.map((a, i) => ({
+      id: `edf-${i}`,
       start: a.onset,
       end: a.onset + (a.duration ?? 0),
       trackId: null,
@@ -248,16 +314,23 @@ export const useEegStore = create<AppState>((set, get) => {
       source: "file" as const,
       confidence: 1,
     }));
-    const keepUser = get().annotations.filter((x) => x.source === "user");
+    const keepUser = get().annotations.filter(
+      (x) => x.source !== "auto" && !x.id.startsWith("edf-"),
+    );
     set({
       segment: seg,
+      analysisSegment: analysis,
+      evidencePreparation: evidence.preparation,
+      evidenceReason: evidence.reason,
+      playing: false,
       playheadEeg: Math.min(get().playheadEeg, seg.duration),
       viewStart: view.start,
       viewDuration: view.duration,
       annotations: [...keepUser, ...fromFile, ...auto],
-      dsa: buildDsa(seg.tracks, seg.duration),
+      dsa: buildDsa(analysis.tracks, analysis.duration),
     });
     pushEngine();
+    playback.seek(position);
   };
 
   return {
@@ -271,6 +344,12 @@ export const useEegStore = create<AppState>((set, get) => {
     derivations: [],
     tracks: {},
     filters: { ...DEFAULT_FILTERS },
+    analysisSegment: null,
+    evidencePreparation: null,
+    evidenceReason: null,
+    soundMode: "off",
+    annotationPast: [],
+    annotationFuture: [],
     sonify: { ...DEFAULT_SONIFY },
     combine: "stereo",
     negativeUp: true,
@@ -289,7 +368,7 @@ export const useEegStore = create<AppState>((set, get) => {
     keysOpen: false,
     annotations: [],
     selectedAnnotation: null,
-    showAuto: true,
+    showAuto: false,
     showAnnotations: true,
     tool: "pointer",
     pendingType: "comment",
@@ -304,9 +383,22 @@ export const useEegStore = create<AppState>((set, get) => {
         playing: false,
         busy: true,
         annotations: [],
+        annotationPast: [],
+        annotationFuture: [],
+        selectedAnnotation: null,
+        recording: null,
+        segment: null,
+        analysisSegment: null,
+        evidencePreparation: null,
+        evidenceReason: null,
+        mix: null,
+        derivations: [],
+        tracks: {},
         dsa: null,
       });
       playback.stop();
+      playback.setControlTracks([], 0);
+      revoke();
       await new Promise((r) => setTimeout(r, 16));
       try {
         const recording = await loadRecording(file, name);
@@ -351,14 +443,45 @@ export const useEegStore = create<AppState>((set, get) => {
     },
 
     setFilters: (p) => {
-      set({ filters: { ...get().filters, ...p }, busy: true });
-      rebuildSession();
+      const next = { ...get().filters, ...p };
+      const { recording, derivations } = get();
+      try {
+        const segment = recording ? processSegment(recording, 0, recording.header.duration, derivations, next) : null;
+        set({ filters: next, segment, error: null });
+      } catch (err) {
+        set({ error: err instanceof Error ? err.message : "Display filter could not be applied." });
+      }
+    },
+
+    setSoundMode: (mode) => {
+      const t = eegNow(get());
+      const evidenceReady = Boolean(get().evidencePreparation);
+      const soundEnabled =
+        mode === "experimental" ||
+        mode === "musical" ||
+        ((mode === "evidence" || mode === "hybrid") && evidenceReady);
+      playback.setSoundEnabled(soundEnabled);
+      const sonify =
+        mode === "musical"
+          ? { ...get().sonify, mode: "contour" as const, quantize: true }
+          : mode === "experimental"
+            ? { ...get().sonify, mode: "contour" as const, quantize: false }
+            : mode === "hybrid"
+              ? { ...get().sonify, mode: "loui-hybrid" as const, timeScale: 1 }
+              : mode === "evidence"
+                ? { ...get().sonify, mode: "loui" as const, timeScale: 1 }
+                : get().sonify;
+      set({ soundMode: mode, sonify, playing: false, playheadEeg: t, audibleScrub: false });
+      pushEngine();
+      playback.seek(t);
     },
 
     setSonify: (p) => {
       const next = { ...get().sonify, ...p };
       set({ sonify: next });
-      playback.setSettings(next, get().negativeUp);
+      if (get().soundMode === "experimental" || get().soundMode === "musical") {
+        playback.setSettings(next, true);
+      }
       const { segment } = get();
       if (segment) {
         const ts = next.mode === "direct" ? next.compression : next.timeScale;
@@ -479,12 +602,13 @@ export const useEegStore = create<AppState>((set, get) => {
     },
     setNegativeUp: (v) => {
       set({ negativeUp: v });
-      playback.setSettings(get().sonify, v);
+      // Display polarity does not change auditory mapping polarity.
     },
     setAboutOpen: (v) => set({ aboutOpen: v }),
     setKeysOpen: (v) => set({ keysOpen: v }),
     setShowDsa: (v) => set({ showDsa: v }),
-    setAudibleScrub: (v) => set({ audibleScrub: v }),
+    setAudibleScrub: (v) =>
+      set({ audibleScrub: v && ["experimental", "musical"].includes(get().soundMode) }),
 
     seekEeg: (t) => {
       const { segment } = get();
@@ -499,6 +623,13 @@ export const useEegStore = create<AppState>((set, get) => {
 
     togglePlay: async () => {
       if (playback.duration() <= 0) return;
+      if (
+        (get().soundMode === "evidence" || get().soundMode === "hybrid") &&
+        !get().evidencePreparation
+      ) {
+        set({ error: get().evidenceReason ?? "The Loui 2014 mapping requires Fz and Cz." });
+        return;
+      }
       if (playback.playing) {
         playback.pause();
         liveViewCommit();
@@ -509,13 +640,16 @@ export const useEegStore = create<AppState>((set, get) => {
         if (!playback.loop) {
           set({
             playing: false,
-            playheadEeg: 0,
-            viewStart: get().followPlayhead ? 0 : get().viewStart,
+            playheadEeg: get().segment?.duration ?? 0,
           });
         }
       };
-      await playback.play();
-      set({ playing: true });
+      try {
+        await playback.play();
+        set({ playing: playback.playing, error: null });
+      } catch (err) {
+        set({ playing: false, error: err instanceof Error ? err.message : "Audio could not start." });
+      }
     },
 
     stop: () => {
@@ -534,8 +668,22 @@ export const useEegStore = create<AppState>((set, get) => {
     },
 
     download: () => {
-      const mix = playback.bounceWav(get().negativeUp);
-      if (!mix || mix.left.length === 0) return;
+      if (get().soundMode === "off") return;
+      const state = get();
+      if (!state.analysisSegment || !state.recording) return;
+      if (
+        (state.soundMode === "evidence" || state.soundMode === "hybrid") &&
+        !state.evidencePreparation
+      )
+        return;
+      const session = mappingSession(state);
+      const rendered = renderSession(session, state.sonify.outputRate);
+      if (rendered.left.length === 0) return;
+      const mix: MixResult = {
+        ...rendered,
+        eegDuration: session.region.end - session.region.start,
+        compressionUsed: 1,
+      };
       revoke();
       const blob = encodeWav(mix, 16);
       const url = URL.createObjectURL(blob);
@@ -543,7 +691,7 @@ export const useEegStore = create<AppState>((set, get) => {
       set({ wavUrl: url });
       const a = document.createElement("a");
       a.href = url;
-      a.download = "auris-sonify.wav";
+      a.download = "auris-mapped-region.wav";
       a.click();
     },
 
@@ -623,19 +771,34 @@ export const useEegStore = create<AppState>((set, get) => {
     },
 
     addAnnotation: (a) => {
-      const item: Annotation = { ...a, id: nid() };
-      set({
-        annotations: [...get().annotations, item],
-        selectedAnnotation: item.id,
-        tool: "pointer",
-      });
+      const item = validateAnnotations([{ ...a, id: nid(), source: "user" }], { duration: get().segment?.duration ?? 0 })[0]!;
+      set({ annotationPast: [...get().annotationPast.slice(-49), get().annotations], annotationFuture: [],
+        annotations: [...get().annotations, item], selectedAnnotation: item.id, tool: "pointer" });
     },
-
+    updateAnnotation: (id, patch) => {
+      const old = get().annotations.find((a) => a.id === id);
+      if (!old || old.source !== "user") return;
+      const item = validateAnnotations([{ ...old, ...patch, id, source: "user" }], { duration: get().segment?.duration ?? 0 })[0]!;
+      set({ annotationPast: [...get().annotationPast.slice(-49), get().annotations], annotationFuture: [],
+        annotations: get().annotations.map((a) => a.id === id ? item : a) });
+    },
     removeAnnotation: (id) => {
-      set({
-        annotations: get().annotations.filter((x) => x.id !== id),
-        selectedAnnotation: get().selectedAnnotation === id ? null : get().selectedAnnotation,
-      });
+      if (!get().annotations.some((a) => a.id === id && a.source === "user")) return;
+      set({ annotationPast: [...get().annotationPast.slice(-49), get().annotations], annotationFuture: [],
+        annotations: get().annotations.filter((a) => a.id !== id), selectedAnnotation: null });
+    },
+    undoAnnotations: () => {
+      const h = annotationHistoryUndo(get().annotationPast, get().annotations, get().annotationFuture);
+      set({ annotations: h.current, annotationPast: h.past, annotationFuture: h.future, selectedAnnotation: null });
+    },
+    redoAnnotations: () => {
+      const h = annotationHistoryRedo(get().annotationPast, get().annotations, get().annotationFuture);
+      set({ annotations: h.current, annotationPast: h.past, annotationFuture: h.future, selectedAnnotation: null });
+    },
+    importAnnotations: (items) => {
+      const imported = validateAnnotations(items, { duration: get().segment?.duration ?? 0 }).map((a) => ({ ...a, id: nid(), source: "file" as const }));
+      set({ annotationPast: [...get().annotationPast.slice(-49), get().annotations], annotationFuture: [],
+        annotations: [...get().annotations, ...imported] });
     },
 
     selectAnnotation: (id) => {
@@ -644,7 +807,11 @@ export const useEegStore = create<AppState>((set, get) => {
       if (a) get().seekEeg(a.start);
     },
 
-    setShowAuto: (v) => set({ showAuto: v }),
+    setShowAuto: (v) => {
+      const existing = get().annotations.filter((a) => a.source !== "auto");
+      const auto = v && get().analysisSegment ? detectMorphologies(get().analysisSegment!.tracks).filter((a) => a.type !== "qrs") : [];
+      set({ showAuto: v, annotations: [...existing, ...auto] });
+    },
     setShowAnnotations: (v) => set({ showAnnotations: v }),
     setTool: (t) => set({ tool: t }),
     setPendingType: (t) => set({ pendingType: t }),
@@ -666,22 +833,190 @@ export const useEegStore = create<AppState>((set, get) => {
       a.click();
       URL.revokeObjectURL(url);
     },
+
+    exportMappingAudit: () => {
+      const state = get();
+      if (!state.analysisSegment || !state.recording) return;
+      if (
+        (state.soundMode === "evidence" || state.soundMode === "hybrid") &&
+        !state.evidencePreparation
+      )
+        return;
+      const session = mappingSession(state);
+      downloadJson(
+        "auris-mapping-audit.json",
+        {
+          recording: state.recording.name,
+          montage: state.montage,
+          application: "Auris EEG",
+          session,
+        },
+      );
+    },
   };
 });
 
-export function currentRepro(state: AppState): ReproSummary | null {
-  if (!state.recording || !state.segment) return null;
-  const processed = state.segment.tracks;
-  const audible = [...audibleIds(Object.values(state.tracks))];
-  return buildRepro({
-    file: state.recording.name,
-    montage: state.montage,
-    labels: processed.map((t) => t.label),
-    start: state.segment.start,
-    duration: state.segment.duration,
-    filters: state.filters,
-    settings: state.sonify,
-    combine: state.combine,
-    audible: processed.filter((t) => audible.includes(t.id)).map((t) => t.label),
+function mappingSession(state: AppState) {
+  if (
+    (state.soundMode === "evidence" || state.soundMode === "hybrid") &&
+    state.evidencePreparation
+  ) {
+    return generateLoui2014Session(state.evidencePreparation, {
+      start: state.viewStart,
+      hybrid: state.soundMode === "hybrid",
+      filters: EVIDENCE_FILTERS,
+      derivationSources: ["Fz", "Cz"],
+    });
+  }
+  const sourceDerivations = Object.fromEntries(
+    state.derivations.map((derivation) => [
+      derivation.id,
+      derivation.sources.map(
+        (index) => state.recording?.header.signals[index]?.label ?? `signal-${index}`,
+      ),
+    ]),
+  );
+  const trackControls = state.analysisSegment!.tracks.map((track) => {
+    const control = state.tracks[track.id];
+    return {
+      id: track.id,
+      gain: control?.gain ?? 1,
+      mute: control?.mute ?? false,
+      pan: panForLaterality(control?.lateralityOverride ?? track.laterality),
+    };
   });
+  return generateSession(state.analysisSegment!.tracks, {
+    start: state.viewStart,
+    end: Math.min(state.analysisSegment!.duration, state.viewStart + state.viewDuration),
+    filters: DEFAULT_FILTERS,
+    mapping: state.sonify.mode === "pulse" ? "rms-pulse-v1" : "contour-v1",
+    style: state.soundMode === "musical" ? "pentatonic-v1" : "plain-v1",
+    trackControls,
+    sourceDerivations,
+  });
+}
+
+function downloadJson(filename: string, value: unknown) {
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export function currentRepro(state: AppState): ReproSummary | null {
+  if (
+    !state.recording ||
+    !state.analysisSegment ||
+    state.soundMode === "off" ||
+    ((state.soundMode === "evidence" || state.soundMode === "hybrid") &&
+      !state.evidencePreparation)
+  ) {
+    return null;
+  }
+  if (
+    (state.soundMode === "evidence" || state.soundMode === "hybrid") &&
+    state.evidencePreparation
+  ) {
+    const preparation = state.evidencePreparation;
+    const start = state.viewStart;
+    const duration = Math.min(10, Math.max(0, preparation.source.samples.length / 256 - start));
+    return {
+      file: state.recording.name,
+      montage: "locked Fz–Cz study-reproduction source",
+      channels: ["Fz–Cz"],
+      interval: `${start.toFixed(2)}–${(start + duration).toFixed(2)} s`,
+      filters: [
+        preparation.resampled
+          ? `linear resampling ${preparation.sourceSampleRate}→256 Hz; no display filters`
+          : "native 256 Hz; no display filters",
+      ],
+      audible: ["Fz–Cz"],
+      normalization: "10 s epoch min/max linearly scaled to 1–40; every 20th 256 Hz sample",
+      method:
+        state.soundMode === "hybrid"
+          ? "loui-2014-fz-cz-v1@1.0.0 (Level B) + loui-soft-v1@1.0.0 downstream style"
+          : "loui-2014-fz-cz-v1@1.0.0 (Level B study reproduction)",
+      compression: "1× source timeline; 12.8 mapped events/s",
+      carrier:
+        state.soundMode === "hybrid"
+          ? "C-major-pentatonic pitch; disclosed soft second harmonic, pitch unchanged"
+          : "C-major-pentatonic pitch; neutral sine substitutes for unavailable study patch",
+      outputRate: `${state.sonify.outputRate} Hz`,
+      stereo: "locked center",
+    };
+  }
+  const processed = state.analysisSegment.tracks;
+  const audible = [...audibleIds(Object.values(state.tracks))];
+  const start = state.viewStart;
+  const duration = Math.min(
+    30,
+    state.viewDuration,
+    Math.max(0, state.analysisSegment.duration - start),
+  );
+  return {
+    file: state.recording.name,
+    montage: `${state.montage} · source derivations recorded in mapping audit`,
+    channels: processed.map((t) => t.label),
+    interval: `${start.toFixed(2)}–${(start + duration).toFixed(2)} s`,
+    filters: ["DC offset removed (analysis branch)"],
+    audible: processed.filter((t) => audible.includes(t.id)).map((t) => t.label),
+    normalization: "per-track region max absolute amplitude; 0.25 s feature windows",
+    method:
+      state.soundMode === "musical"
+        ? "auris:contour-v1@1.0.0 (Level X) + pentatonic-v1@1.0.0 style"
+        : state.sonify.mode === "pulse"
+          ? "auris:rms-pulse-v1@1.0.0 (Level X) + plain-v1@1.0.0 style"
+          : "auris:contour-v1@1.0.0 (Level X) + plain-v1@1.0.0 style",
+    compression: "1× event timeline; exported region capped at 30 seconds",
+    carrier:
+      state.sonify.mode === "pulse" && state.soundMode === "experimental"
+        ? "feature RMS maps deterministically to pulse velocity"
+        : "feature mean maps deterministically to 210–840 Hz",
+    outputRate: `${state.sonify.outputRate} Hz`,
+    stereo: state.combine,
+  };
+}
+
+const EVIDENCE_FILTERS: FilterSettings = {
+  bandpass: false,
+  bandpassLow: 0,
+  bandpassHigh: 0,
+  lff: 0,
+  hff: 0,
+  notch60: false,
+  removeDc: false,
+};
+
+function evidenceForRecording(recording: LoadedRecording): {
+  preparation: Loui2014Preparation | null;
+  reason: string | null;
+} {
+  const derivation = derivationsFor(recording, "custom", [["Fz", "Cz"]]).find(
+    (candidate) => candidate.id === "custom:Fz-Cz",
+  );
+  if (!derivation?.available) {
+    return {
+      preparation: null,
+      reason: "Loui 2014 study reproduction requires compatible Fz and Cz channels.",
+    };
+  }
+  try {
+    const source = processSegment(
+      recording,
+      0,
+      recording.header.duration,
+      [derivation],
+      EVIDENCE_FILTERS,
+    ).tracks[0];
+    if (!source) throw new Error("Fz–Cz could not be derived.");
+    return { preparation: prepareLoui2014(source), reason: null };
+  } catch (error) {
+    return {
+      preparation: null,
+      reason: error instanceof Error ? error.message : "Fz–Cz could not be prepared.",
+    };
+  }
 }

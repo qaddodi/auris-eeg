@@ -53,6 +53,7 @@ class ContourProcessor extends AudioWorkletProcessor {
       grit: 0,
       prevVn: 0,
       noteCooldown: 0,
+      lastEventIndex: -1,
     };
   }
 
@@ -120,6 +121,7 @@ class ContourProcessor extends AudioWorkletProcessor {
         grit: 0,
         prevVn: 0,
         noteCooldown: 0,
+        lastEventIndex: -1,
       }));
     } else if (msg.type === "params") {
       const map = {};
@@ -276,6 +278,22 @@ class ContourProcessor extends AudioWorkletProcessor {
     return this.stereo(sample, pan);
   }
 
+  louiVoice(vn, state, pan, gain, vg, sr, eventIndex, hybrid) {
+    if (eventIndex !== state.lastEventIndex) {
+      state.lastEventIndex = eventIndex;
+      state.hammer = 1;
+      state.phase = 0;
+    }
+    const midi = 48 + Math.round(Math.max(0, Math.min(1, vn)) * 40);
+    state.hz = this.midiToHz(midi);
+    state.phase += (2 * Math.PI * state.hz) / sr;
+    const envelope = Math.min(1, state.hammer * 4);
+    state.hammer *= Math.exp(-1 / (0.06 * sr));
+    const fundamental = Math.sin(state.phase);
+    const tone = hybrid ? fundamental + 0.18 * Math.sin(state.phase * 2) : fundamental;
+    return this.stereo(tone * envelope * gain * vg * (hybrid ? 0.72 : 1), pan);
+  }
+
   voice(mode, vn, state, pan, gain, vg, sr, detune, midiFixed, spikeEnv) {
     if (mode === "pulse") return this.pulseVoice(vn, state, pan, gain, vg, sr, midiFixed);
     if (mode === "piano") return this.pianoVoice(vn, state, pan, gain, vg, sr, detune, spikeEnv);
@@ -293,7 +311,8 @@ class ContourProcessor extends AudioWorkletProcessor {
     const piano = this.mode === "piano";
     const ambient = this.mode === "ambient" || this.mode === "choir";
     const pen = this.mode === "pen";
-    const lpHz = pen ? 3400 : piano ? 2600 : this.mode === "direct" ? 1800 : ambient ? 1600 : 1100;
+    const loui = this.mode === "loui" || this.mode === "loui-hybrid";
+    const lpHz = loui ? 4200 : pen ? 3400 : piano ? 2600 : this.mode === "direct" ? 1800 : ambient ? 1600 : 1100;
     const lpA = 1 - Math.exp((-2 * Math.PI * lpHz) / sr);
     const a4 = 1 - Math.exp((-2 * Math.PI * 4) / sr);
     const a8 = 1 - Math.exp((-2 * Math.PI * 8) / sr);
@@ -325,7 +344,7 @@ class ContourProcessor extends AudioWorkletProcessor {
     const dtEeg = this.timeScale / sr;
     const rootHz = this.midiToHz(this.root);
     const choirRatio = [1, 1.25, 1.5, 2];
-    const pitched = this.mode === "contour" || this.mode === "pulse" || piano || pen;
+    const pitched = this.mode === "contour" || this.mode === "pulse" || piano || pen || loui;
 
     for (let i = 0; i < n; i++) {
       const eegT = this.playing ? this.nowEeg() + i * dtEeg : this.eegT;
@@ -355,7 +374,8 @@ class ContourProcessor extends AudioWorkletProcessor {
         for (let k = 0; k < eeg.length; k++) {
           const t = eeg[k];
           if (t.live <= 0.001) continue;
-          const raw = this.interp(t.voltage, eegT * t.rate);
+          const eventIndex = Math.min(t.voltage.length - 1, Math.max(0, Math.floor(eegT * t.rate)));
+          const raw = loui ? t.voltage[eventIndex] : this.interp(t.voltage, eegT * t.rate);
           const vn = Math.max(-1, Math.min(1, raw * t.scale));
           const w = t.live * t.gain;
           if (t.pan < -0.25) {
@@ -369,6 +389,21 @@ class ContourProcessor extends AudioWorkletProcessor {
             mN++;
           }
           if (!useGroups && pitched) {
+            if (loui) {
+              const pair = this.louiVoice(
+                vn,
+                t,
+                t.pan,
+                1,
+                vg,
+                sr,
+                eventIndex,
+                this.mode === "loui-hybrid",
+              );
+              l += pair[0];
+              r += pair[1];
+              continue;
+            }
             const midiOff = t.pan < -0.25 ? 0 : t.pan > 0.25 ? 7 : 3;
             const pair = this.voice(
               this.mode,

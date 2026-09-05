@@ -1,0 +1,98 @@
+schema_version: 1
+reviewed_on: 2026-09-05
+product_claim_status: unvalidated
+sources:
+  - id: norata-2023-pen-history
+    citation: "Norata D, Broggi S, Alvisi L, Lattanzi S, Brigo F, Tinuper P. The EEG pen-on-paper sound: History and recent advances. Seizure. 2023;107:67-70."
+    doi: "10.1016/j.seizure.2023.03.011"
+    pmid: "36965379"
+    publication_type: narrative_review_with_supplementary_examples
+    primary_url: "https://doi.org/10.1016/j.seizure.2023.03.011"
+    supports:
+      - "Historical analog EEG writer noise depended on physical pen movement and velocity."
+      - "Experienced technologists reportedly used changes in writer sound as an attention cue."
+    does_not_support:
+      - "A specified or validated digital derivative-to-noise algorithm."
+      - "Diagnostic accuracy of Auris Pen mode."
+    auris_modes: [pen]
+    fidelity: inspiration_only
+
+  - id: wu-2009-scale-free
+    citation: "Wu D, Li C-Y, Yao D-Z. Scale-Free Music of the Brain. PLoS One. 2009;4(6):e5915."
+    doi: "10.1371/journal.pone.0005915"
+    pmid: "19526057"
+    pmcid: "PMC2691588"
+    publication_type: method_and_listener_evaluation
+    primary_url: "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0005915"
+    disclosed_mapping:
+      segmentation: "one detected EEG wave per musical note; peak-to-peak amplitude via zero crossings"
+      pitch: "nonlinear power-law-derived function of wave amplitude"
+      duration: "wave period"
+      intensity: "logarithm of change rate of average power (Fechner-law rationale)"
+      timbre: "fixed; piano in reported implementation"
+    human_evidence: "60 healthy students; 25 pieces; trained/example-anchored REM/SWS/WN identification; reported 86.8% mean accuracy."
+    auris_modes: [choir]
+    fidelity: materially_different
+    blocking_gaps:
+      - "Equations 1 and 8-9 require verified transcription from typeset equation images."
+      - "Auris band envelopes, fixed just-intonation partials, and 1/(band-index+1) gain are not this method."
+
+  - id: loui-2014-seizure-sonification
+    citation: "Loui P, Koplin-Green M, Frick M, Massone M. Rapidly Learned Identification of Epileptic Seizures from Sonified EEG. Front Hum Neurosci. 2014;8:820."
+    doi: "10.3389/fnhum.2014.00820"
+    pmid: "25352802"
+    pmcid: "PMC4195310"
+    publication_type: pre_post_human_training_study
+    primary_url: "https://doi.org/10.3389/fnhum.2014.00820"
+    disclosed_mapping:
+      input: "10 s Fz-Cz epochs, CHB-MIT, 256 Hz"
+      polling: "every 20th sample (12.8 values/s)"
+      pitch: "linear scale to 1-40, then snap to C major pentatonic degrees through 40"
+      velocity: "random integer 85-127"
+      synthesis: "Native Instruments Massive, Old and Far Away preset; three low-pass sine/saw oscillators, fast attack/release"
+    human_evidence: "43 usable naive listeners; 53.1% pre-training and 63.4% post-training accuracy; six labeled training clips; post-training d-prime 0.751."
+    auris_modes: [evidence, hybrid]
+    fidelity: symbolic_mapping_reproduced_with_documented_acoustic_substitutions
+    implemented_locked_reproduction: true
+    implementation:
+      id: "loui-2014-fz-cz-v1"
+      version: "1.0.0"
+      classification: "B"
+      deviations:
+        - "Linear resampling to 256 Hz is disclosed when source data is not natively 256 Hz."
+        - "Deterministic velocities in the published 85-127 range replace unspecified random draws."
+        - "A neutral sine voice replaces the unavailable proprietary Massive preset."
+        - "Hybrid adds a downstream soft second harmonic without changing mapped pitch or timing."
+
+  - id: hobbs-2018-brain-stethoscope
+    citation: "Hobbs K, et al. Rapid Bedside Evaluation of Seizures in the ICU by Listening to the Sound of Brainwaves. Neurocrit Care. 2018;29(2):302-312."
+    doi: "10.1007/s12028-018-0543-7"
+    pmid: "29923167"
+    publication_type: prospective_observational_clinical_trial
+    primary_url: "https://pubmed.ncbi.nlm.nih.gov/29923167/"
+    mapping_access: proprietary
+    human_evidence: "35 cases; 30 s per hemisphere; only one seizure during sonification and one subsequent seizure-associated rhythmic case."
+    auris_modes: []
+    fidelity: not_assessable
+
+  - id: shum-2020-sounds-of-seizures
+    citation: "Shum J, et al. Sounds of seizures. Seizure. 2020;78:86-90."
+    doi: "10.1016/j.seizure.2020.03.008"
+    pmid: "32276233"
+    pmcid: "PMC7269794"
+    publication_type: blinded_listener_feasibility_study
+    primary_url: "https://doi.org/10.1016/j.seizure.2020.03.008"
+    modality: patient_and_room_audio
+    human_evidence: "Five epileptologists; 166 clips from 83 patients; consensus PPV 0.91 and NPV 0.66."
+    auris_modes: []
+    fidelity: out_of_scope_not_eeg_sonification
+
+claims:
+  - id: ui-pen-norata-2023
+    current_text_summary: "Pen mode (Norata 2023) is analog paper scratch; pen speed is absolute dV/dt."
+    verdict: overclaims_method_fidelity
+    allowed_replacement: "Pen is an experimental digital scratch inspired by historical analog EEG writer sounds reviewed by Norata et al. (2023)."
+  - id: ui-choir-wu-2009
+    current_text_summary: "Choir uses just-intonation partials with 1/f loudness (Wu 2009 scale-free brain-wave music)."
+    verdict: unsupported_attribution
+    allowed_replacement: "Choir is an experimental band-envelope mapping. Wu et al. (2009) used a different wave-to-note scale-free method."

@@ -104,7 +104,7 @@ export function buildSyntheticEdf(opts: {
   const fs = 200;
   const nsp = Math.round(fs * recDur);
   const nrec = Math.round(opts.duration / recDur);
-  const labels = ["EEG Fp1", "EEG Fp2", "EEG Fz", "EEG T3", "EEG T4", "EDF Annotations"];
+  const labels = ["EEG Fp1", "EEG Fp2", "EEG Fz", "EEG T3", "EEG Cz", "EDF Annotations"];
   const nsig = labels.length;
   const headerBytes = 256 + nsig * 256;
   const annotNsp = 25;

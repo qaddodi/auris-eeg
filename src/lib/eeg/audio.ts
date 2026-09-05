@@ -136,6 +136,8 @@ export class MixerEngine {
   node: AudioWorkletNode | null = null;
   playing = false;
   loop = false;
+  private soundEnabled = false;
+  private sessionDirty = false;
   private eegDur = 0;
   private timeScale = 2;
   private eegOffset = 0;
@@ -158,7 +160,7 @@ export class MixerEngine {
     if (this.ctx.state === "suspended") await this.ctx.resume();
     if (!this.ready) {
       this.ready = this.ctx.audioWorklet
-        .addModule(`${import.meta.env.BASE_URL}contour-worklet.js?v=pen-dsa`)
+        .addModule(`${import.meta.env.BASE_URL}contour-worklet.js?v=loui-2014`)
         .then(() => {
           if (!this.ctx) return;
           this.node = new AudioWorkletNode(this.ctx, "contour-synth", {
@@ -190,7 +192,8 @@ export class MixerEngine {
           this.master.connect(this.ctx.destination);
         })
         .catch((err) => {
-          console.warn("contour worklet failed", err);
+          this.ready = null;
+          throw new Error("Audio could not start. Your browser must support AudioWorklet.", { cause: err });
         });
     }
     await this.ready;
@@ -201,22 +204,31 @@ export class MixerEngine {
     this.controls = tracks;
     this.eegDur = eegDuration;
     this.endedFired = false;
-    const payload = tracks.map((t) => ({
-      id: t.id,
-      voltage: t.voltage,
-      sampleRate: t.sampleRate,
-      pan: t.pan,
-      gain: t.gain,
-      mute: t.mute,
-      solo: t.solo,
-      spikes: t.spikes,
-      scale: 1 / Math.max(1e-6, percentileAbs(t.voltage, 0.995)),
-      kind: t.kind,
+    this.sessionDirty = true;
+    if (this.node) this.pushSession();
+  }
+
+  private pushSession() {
+    if (!this.node || !this.sessionDirty) return;
+    const tracks = this.controls.map((t) => ({
+      ...t,
+      scale:
+        t.id === "evidence:loui-2014-events"
+          ? 1 / 40
+          : 1 / Math.max(1e-6, percentileAbs(t.voltage, 0.995)),
     }));
-    void this.ensure().then(() => {
-      this.node?.port.postMessage({ type: "session", eegDuration, tracks: payload });
-      this.pushSettings();
-    });
+    this.node.port.postMessage({ type: "session", eegDuration: this.eegDur, tracks });
+    this.sessionDirty = false;
+    this.pushSettings();
+  }
+
+  setSoundEnabled(enabled: boolean) {
+    // A mode change is a transport boundary. Off cannot start or resume audio.
+    this.pause();
+    this.endScrub();
+    this.soundEnabled = enabled;
+    if (this.master) this.master.gain.value = enabled ? 1 : 0;
+    if (!enabled && this.ctx) void this.ctx.suspend();
   }
 
   applyParams(params: Param[]) {
@@ -236,10 +248,17 @@ export class MixerEngine {
   }
 
   setSettings(sonify: SonifySettings, negativeUp: boolean) {
+    const position = this.currentTime();
     this.sonify = sonify;
     this.negativeUp = negativeUp;
     this.timeScale = sonify.mode === "direct" ? sonify.compression : sonify.timeScale;
+    this.eegOffset = position;
+    this.startedAt = this.clock();
     this.pushSettings();
+  }
+
+  private clock(): number {
+    return this.soundEnabled && this.ctx ? this.ctx.currentTime : performance.now() / 1000;
   }
 
   private pushSettings() {
@@ -247,8 +266,10 @@ export class MixerEngine {
     if (!s || !this.node) return;
     if (this.lp) {
       this.lp.frequency.value =
-        s.mode === "pen"
+        s.mode === "loui" || s.mode === "loui-hybrid"
           ? 4200
+          : s.mode === "pen"
+            ? 4200
           : s.mode === "piano"
             ? 2800
             : s.mode === "choir" || s.mode === "ambient"
@@ -270,10 +291,10 @@ export class MixerEngine {
 
   /** EEG seconds. */
   currentTime(): number {
-    if (!this.playing || !this.ctx) {
+    if (!this.playing) {
       return Math.min(this.eegDur, Math.max(0, this.eegOffset));
     }
-    let t = this.eegOffset + (this.ctx.currentTime - this.startedAt) * this.timeScale;
+    let t = this.eegOffset + (this.clock() - this.startedAt) * this.timeScale;
     if (this.loop && this.eegDur > 0) t = ((t % this.eegDur) + this.eegDur) % this.eegDur;
     else t = Math.min(this.eegDur, Math.max(0, t));
     if (!this.loop && this.eegDur > 0 && t >= this.eegDur - 1e-3) {
@@ -299,12 +320,15 @@ export class MixerEngine {
 
   async play() {
     if (this.eegDur <= 0) return;
-    const ctx = await this.ensure();
-    if (!this.node) return;
+    if (this.soundEnabled) {
+      await this.ensure();
+      this.pushSession();
+      if (!this.node) throw new Error("Audio worklet is unavailable.");
+    }
     this.endedFired = false;
     if (this.eegOffset >= this.eegDur - 1e-3) this.eegOffset = 0;
-    this.node.port.postMessage({ type: "play", eegTime: this.eegOffset });
-    this.startedAt = ctx.currentTime;
+    if (this.soundEnabled) this.node?.port.postMessage({ type: "play", eegTime: this.eegOffset });
+    this.startedAt = this.clock();
     this.playing = true;
   }
 
@@ -328,14 +352,15 @@ export class MixerEngine {
     this.eegOffset = Math.min(this.eegDur, Math.max(0, eegT));
     this.endedFired = false;
     this.node?.port.postMessage({ type: "seek", eegTime: this.eegOffset });
-    if (this.playing && this.ctx) {
-      this.startedAt = this.ctx.currentTime;
-      this.node?.port.postMessage({ type: "play", eegTime: this.eegOffset });
+    if (this.playing) {
+      this.startedAt = this.clock();
+      if (this.soundEnabled) this.node?.port.postMessage({ type: "play", eegTime: this.eegOffset });
     }
   }
 
   /** Play a short, rate-limited preview grain under the pointer during a scrub. */
   scrubAt(eegTime: number, velocity = 0) {
+    if (!this.soundEnabled) return;
     this.scrubActive = true;
     this.scrubPending = { eegTime: Math.max(0, Math.min(this.eegDur, eegTime)), velocity };
     const now = typeof performance === "undefined" ? 0 : performance.now();
@@ -400,6 +425,7 @@ export class MixerEngine {
     const scale = settings?.rangeSemitones ?? 8;
     const rootHz = 440 * 2 ** (((settings?.rootMidi ?? 50) - 69) / 12);
     const phases = active.slice(0, 6).map(() => 0);
+    const scrubScales = active.slice(0, 6).map((track) => trackScale(track.voltage));
     for (let i = 0; i < n; i++) {
       const progress = i / Math.max(1, n - 1);
       const eegT = scrubPreviewTime(
@@ -414,7 +440,7 @@ export class MixerEngine {
       let r = 0;
       active.slice(0, 6).forEach((track, index) => {
         const raw = interpolateControl(track.voltage, eegT * track.sampleRate);
-        const vn = Math.max(-1, Math.min(1, raw * trackScale(track.voltage)));
+        const vn = Math.max(-1, Math.min(1, raw * (scrubScales[index] ?? 1)));
         const hz =
           settings?.mode === "direct"
             ? 120 + Math.abs(vn) * 680

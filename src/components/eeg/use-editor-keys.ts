@@ -5,9 +5,11 @@ import { VIEW_PRESETS } from "@/lib/eeg/view";
 import { useEegStore } from "@/store/eeg-store";
 
 function isTypingTarget(el: EventTarget | null): boolean {
-  const tag = (el as HTMLElement | null)?.tagName;
+  const element = el as HTMLElement | null;
+  const tag = element?.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-  return Boolean((el as HTMLElement | null)?.isContentEditable);
+  if (element?.isContentEditable) return true;
+  return Boolean(element?.closest("button, a, [role='button'], [role='menuitem']"));
 }
 
 export function useEditorKeys() {
@@ -15,6 +17,18 @@ export function useEditorKeys() {
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target)) return;
       const s = useEegStore.getState();
+      if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+        if (e.key.toLowerCase() === "z") {
+          e.preventDefault();
+          if (e.shiftKey) s.redoAnnotations();
+          else s.undoAnnotations();
+        } else if (e.key.toLowerCase() === "y") {
+          e.preventDefault();
+          s.redoAnnotations();
+        }
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.code === "Space") {
         e.preventDefault();
         void s.togglePlay();
