@@ -626,8 +626,16 @@ describe("polygraphy channel kinds", () => {
     ];
     const d = montageDerivations("double-banana", ch);
     assert.ok(d.some((x) => x.kind === "ekg" && x.label === "EKG" && x.available));
-    assert.ok(d.some((x) => x.kind === "eog" && x.label === "Lid L"));
-    assert.ok(d.some((x) => x.kind === "eog" && x.label === "Lid R"));
+    assert.ok(
+      d.some(
+        (x) =>
+          x.kind === "eog" &&
+          x.label === "EOG R–L (bipolar)" &&
+          x.sources[0] === 21 &&
+          x.sources[1] === 20 &&
+          x.available,
+      ),
+    );
     assert.ok(d.filter((x) => x.kind === "eeg").length >= 8);
   });
 });
