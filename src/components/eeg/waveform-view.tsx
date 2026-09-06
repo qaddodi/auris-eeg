@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { audibleIds } from "@/lib/eeg/pipeline";
 import type { Annotation, ProcessedTrack, TrackState } from "@/lib/eeg/types";
@@ -12,7 +13,7 @@ import {
 } from "@/lib/eeg/view";
 import { MORPH_COLOR } from "@/lib/eeg/defaults";
 import { displayScaleForChannel } from "@/lib/eeg/display";
-import { CSS_PX_PER_MM, nominalMmForVoltage, waveformPlotWidth } from "@/lib/eeg/display-geometry";
+import { CSS_PX_PER_MM, nominalMmForVoltage } from "@/lib/eeg/display-geometry";
 import { hitTestAnnotations, layoutAnnotations } from "@/lib/eeg/annotation-layout";
 import {
   cachedEkgDisplayProfile,
@@ -240,7 +241,10 @@ export function WaveformView() {
     const paint = () => {
       const s = useEegStore.getState();
       let editorSegment = s.displaySegment;
-      const overviewList = (s.segment?.tracks ?? []).filter((t) => t.kind !== "extra");
+      const hidden = new Set(s.hiddenTrackIds);
+      const overviewList = (s.segment?.tracks ?? []).filter(
+        (t) => t.kind !== "extra" && !hidden.has(t.id),
+      );
       const total = s.segment?.duration ?? 0;
       const t = eegNow(s);
       const follow = s.followPlayhead && playback.playing;
@@ -264,7 +268,7 @@ export function WaveformView() {
           viewEnd <= editorSegment.start + editorSegment.duration + 1e-6,
       );
       const editorList = editorReady
-        ? (editorSegment?.tracks ?? []).filter((t) => t.kind !== "extra")
+        ? (editorSegment?.tracks ?? []).filter((t) => t.kind !== "extra" && !hidden.has(t.id))
         : [];
       const displayStart = editorSegment?.start ?? 0;
 
@@ -304,7 +308,7 @@ export function WaveformView() {
             dpr,
             trackStateKey: Object.values(s.tracks)
               .map((tr) => `${tr.id}:${tr.mute ? 1 : 0}${tr.solo ? 1 : 0}`)
-              .join(","),
+              .join(",") + `|hidden:${s.hiddenTrackIds.join(",")}`,
           });
           if (sig !== waveSig && editorReady) {
             waveSig = sig;
@@ -457,7 +461,7 @@ export function WaveformView() {
     const frac = clamp(x / Math.max(1, plotW), 0, 1);
     const t = timeAtFraction(frac, vs, s.viewDuration);
     const laneIds = (latest.displaySegment?.tracks ?? latest.segment?.tracks ?? [])
-      .filter((track) => track.kind !== "extra")
+      .filter((track) => track.kind !== "extra" && !latest.hiddenTrackIds.includes(track.id))
       .map((track) => track.id);
     const laneH = Math.max(1, (rect.height - RULER) / Math.max(1, laneIds.length));
     const y = e.clientY - rect.top;
@@ -567,7 +571,7 @@ export function WaveformView() {
       const rect = wrapRef.current?.getBoundingClientRect();
       const state = useEegStore.getState();
       const list = (state.displaySegment?.tracks ?? state.segment?.tracks ?? []).filter(
-        (track) => track.kind !== "extra",
+        (track) => track.kind !== "extra" && !state.hiddenTrackIds.includes(track.id),
       );
       const contentX = rect ? e.clientX - rect.left + (wrapRef.current?.scrollLeft ?? 0) : 0;
       if (rect && contentX >= GUTTER && list.length > 0) {
@@ -707,7 +711,10 @@ export function WaveformView() {
     return () => wrap.removeEventListener("wheel", onWheel);
   }, [panView, zoomAt]);
 
-  const list = (displaySegment?.tracks ?? segment?.tracks ?? []).filter((t) => t.kind !== "extra");
+  const hiddenTrackIds = useEegStore((s) => s.hiddenTrackIds);
+  const list = (displaySegment?.tracks ?? segment?.tracks ?? []).filter(
+    (t) => t.kind !== "extra" && !hiddenTrackIds.includes(t.id),
+  );
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -756,7 +763,7 @@ export function WaveformView() {
 
       <div
         ref={wrapRef}
-        className="relative min-h-0 flex-1 overflow-auto bg-bg select-none"
+        className="relative min-h-0 flex-1 overflow-hidden bg-bg select-none"
         onPointerDown={onEditorPointer}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -765,8 +772,7 @@ export function WaveformView() {
       >
         <div
           ref={surfaceRef}
-          className="relative min-h-full"
-          style={{ width: `${GUTTER + waveformPlotWidth(viewDuration)}px` }}
+          className="relative min-h-full w-full"
         >
           <canvas ref={editorRef} className="absolute inset-0 size-full" />
           <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
@@ -880,6 +886,8 @@ function drawEditor(
     ctx.moveTo(0, y0 + laneH);
     ctx.lineTo(cssW, y0 + laneH);
     ctx.stroke();
+
+    if (s.hiddenTrackIds.includes(tr.id)) return;
 
     const st = s.tracks[tr.id];
     const live = audible.has(tr.id);
@@ -1356,6 +1364,8 @@ function TrackGutter({
   const toggleSolo = useEegStore((s) => s.toggleSolo);
   const soloExclusive = useEegStore((s) => s.soloExclusive);
   const setGain = useEegStore((s) => s.setGain);
+  const hidden = useEegStore((s) => s.hiddenTrackIds.includes(track.id));
+  const toggleTrackVisibility = useEegStore((s) => s.toggleTrackVisibility);
   const focused = useEegStore((s) => s.focusedTrackIds.length === 0 || s.focusedTrackIds.includes(track.id));
   const lat = st?.lateralityOverride ?? track.laterality;
   const muted = Boolean(st?.mute);
@@ -1365,6 +1375,7 @@ function TrackGutter({
       className={cn(
         "pointer-events-auto flex items-center gap-0.5 border-b border-border/50 px-1",
         focused && "bg-accent/8",
+        hidden && "opacity-50",
       )}
       style={{ height: `${100 / count}%` }}
     >
@@ -1373,6 +1384,20 @@ function TrackGutter({
         style={{ background: stableTraceColor(track.id, track.kind, lat) }}
         aria-hidden="true"
       />
+      <button
+        type="button"
+        title={hidden ? "Show channel" : "Hide channel"}
+        aria-label={`${hidden ? "Show" : "Hide"} ${track.label}`}
+        aria-pressed={hidden}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={() => toggleTrackVisibility(track.id)}
+        className={cn(
+          "grid h-6 min-w-6 shrink-0 place-items-center rounded-sm text-subtle hover:text-fg",
+          hidden ? "bg-surface-2" : "bg-transparent",
+        )}
+      >
+        {hidden ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+      </button>
       <button
         type="button"
         title="Solo — multiple tracks can be soloed. Double-click for exclusive."

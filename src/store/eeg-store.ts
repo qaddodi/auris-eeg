@@ -126,6 +126,7 @@ export interface AppState {
   annotations: Annotation[];
   selectedAnnotation: string | null;
   focusedTrackIds: string[];
+  hiddenTrackIds: string[];
   showAuto: boolean;
   showAnnotations: boolean;
   tool: "pointer" | "annotate" | "caliper";
@@ -183,6 +184,7 @@ export interface AppState {
   exportMappingAudit: () => void;
   setShowDsa: (v: boolean) => void;
   setAudibleScrub: (v: boolean) => void;
+  toggleTrackVisibility: (id: string) => void;
 }
 
 function defaultTrack(id: string, kind?: string): TrackState {
@@ -535,6 +537,7 @@ export const useEegStore = create<AppState>((set, get) => {
     annotations: [],
     selectedAnnotation: null,
     focusedTrackIds: [],
+    hiddenTrackIds: [],
     showAuto: false,
     showAnnotations: true,
     tool: "pointer",
@@ -554,6 +557,7 @@ export const useEegStore = create<AppState>((set, get) => {
         annotationFuture: [],
         selectedAnnotation: null,
         focusedTrackIds: [],
+        hiddenTrackIds: [],
         recording: null,
         rawSegment: null,
         displaySegment: null,
@@ -803,6 +807,12 @@ export const useEegStore = create<AppState>((set, get) => {
     setShowDsa: (v) => set({ showDsa: v }),
     setAudibleScrub: (v) =>
       set({ audibleScrub: v && ["experimental", "musical"].includes(get().soundMode) }),
+    toggleTrackVisibility: (id) =>
+      set((state) => ({
+        hiddenTrackIds: state.hiddenTrackIds.includes(id)
+          ? state.hiddenTrackIds.filter((trackId) => trackId !== id)
+          : [...state.hiddenTrackIds, id],
+      })),
 
     seekEeg: (t, intent = "user") => {
       const { segment } = get();

@@ -76,6 +76,18 @@ function referential(c: ChannelInfo, kind: ChannelKind, label: string): Derivati
   };
 }
 
+function eyelidSide(c: ChannelInfo): "left" | "right" | null {
+  const key = c.canonical.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const raw = c.originalLabel.toUpperCase();
+  if (key === "PG1" || key === "E1" || /\b(LOC|LEFT)\b/.test(raw) || /LID\s*L/.test(raw)) {
+    return "left";
+  }
+  if (key === "PG2" || key === "E2" || /\b(ROC|RIGHT)\b/.test(raw) || /LID\s*R/.test(raw)) {
+    return "right";
+  }
+  return null;
+}
+
 export function auxDerivations(channels: ChannelInfo[]): Derivation[] {
   const ekg = channels.filter((c) => c.kind === "ekg");
   const eog = channels.filter((c) => c.kind === "eog");
@@ -97,7 +109,29 @@ export function auxDerivations(channels: ChannelInfo[]): Derivation[] {
   } else {
     for (const c of ekg) out.push(referential(c, "ekg", auxDisplayLabel("ekg", c.canonical)));
   }
-  for (const c of eog) out.push(referential(c, "eog", auxDisplayLabel("eog", c.canonical)));
+  const leftEog = eog.find((c) => eyelidSide(c) === "left");
+  const rightEog = eog.find((c) => eyelidSide(c) === "right");
+  const pairedEog = new Set<number>();
+  if (leftEog && rightEog) {
+    const sameRate = leftEog.sampleRate === rightEog.sampleRate;
+    out.push({
+      id: "aux:eog-r-l",
+      label: "EOG R–L (bipolar)",
+      sources: [rightEog.index, leftEog.index],
+      laterality: "midline",
+      kind: "eog",
+      sampleRate: rightEog.sampleRate,
+      available: sameRate,
+      missing: sameRate ? [] : ["matching sample rates"],
+    });
+    pairedEog.add(leftEog.index);
+    pairedEog.add(rightEog.index);
+  }
+  for (const c of eog) {
+    if (!pairedEog.has(c.index)) {
+      out.push(referential(c, "eog", auxDisplayLabel("eog", c.canonical)));
+    }
+  }
   for (const c of emg) out.push(referential(c, "emg", auxDisplayLabel("emg", c.canonical)));
   for (const c of extra) out.push(referential(c, "extra", c.canonical));
   return out;

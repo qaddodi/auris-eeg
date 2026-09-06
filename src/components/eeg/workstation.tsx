@@ -9,20 +9,18 @@ import {
   type ChangeEvent,
   type ReactNode,
 } from "react";
-import { Activity, Expand, Info, Keyboard, PanelLeft, Scan, Upload } from "lucide-react";
+import { Activity, PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ControlPanel } from "./control-panel";
 import { Transport } from "./transport";
 import { WaveformView } from "./waveform-view";
-import { ReviewBar } from "./review-bar";
 import { useEditorKeys } from "./use-editor-keys";
 import { SHORTCUTS } from "@/lib/eeg/shortcuts";
 import { buildSyntheticEdf } from "@/lib/eeg/synthetic";
 import { useEegStore } from "@/store/eeg-store";
 
 export function Workstation() {
-  const [panel, setPanel] = useState<boolean | null>(null);
-  const [fullscreen, setFullscreen] = useState(false);
+  const [panel, setPanel] = useState(false);
   const [focusEeg, setFocusEeg] = useState(false);
   const aboutOpen = useEegStore((s) => s.aboutOpen);
   const setAboutOpen = useEegStore((s) => s.setAboutOpen);
@@ -30,22 +28,12 @@ export function Workstation() {
   const setKeysOpen = useEegStore((s) => s.setKeysOpen);
   const loadFile = useEegStore((s) => s.loadFile);
   const status = useEegStore((s) => s.status);
-  const soundMode = useEegStore((s) => s.soundMode);
-  const setSoundMode = useEegStore((s) => s.setSoundMode);
-  const evidencePreparation = useEegStore((s) => s.evidencePreparation);
-  const evidenceReason = useEegStore((s) => s.evidenceReason);
   const showDsa = useEegStore((s) => s.showDsa);
   const setShowDsa = useEegStore((s) => s.setShowDsa);
   const demoStarted = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const toggleFocusEeg = useCallback(() => setFocusEeg((value) => !value), []);
   useEditorKeys(toggleFocusEeg);
-
-  useEffect(() => {
-    const onFullscreen = () => setFullscreen(Boolean(document.fullscreenElement));
-    document.addEventListener("fullscreenchange", onFullscreen);
-    return () => document.removeEventListener("fullscreenchange", onFullscreen);
-  }, []);
 
   useEffect(() => {
     if (status !== "idle" || demoStarted.current) return;
@@ -70,124 +58,25 @@ export function Workstation() {
     if (file) void loadFile(file, file.name);
   };
 
-  const soundStatus = {
-    off: "Visual review at 1× · sound off",
-    evidence: evidencePreparation
-      ? "Loui 2014 study reproduction · Level B"
-      : (evidenceReason ?? "Fz–Cz required"),
-    hybrid: evidencePreparation
-      ? "Loui 2014 mapping + disclosed soft style"
-      : (evidenceReason ?? "Fz–Cz required"),
-    experimental: "Experimental contour mapping active",
-    musical: "Musical mapping active",
-  }[soundMode];
-
-  const togglePanel = () => {
-    const desktop = window.matchMedia("(min-width: 768px)").matches;
-    setPanel((value) => {
-      const open = value == null ? desktop : value;
-      return !open;
-    });
-  };
+  const togglePanel = () => setPanel((value) => !value);
 
   return (
     <div
       className={`workstation-shell flex h-dvh min-h-0 flex-col bg-bg text-fg ${focusEeg ? "workstation-focus" : ""}`}
     >
+      <input ref={fileRef} type="file" accept=".edf,.EDF" className="sr-only" onChange={onFile} />
       {!focusEeg && (
-        <header className="workstation-header flex min-h-10 shrink-0 items-center gap-2 border-b border-border bg-surface px-2 py-1.5 sm:px-3">
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label={panel === true ? "Close review controls" : "Open review controls"}
-            aria-expanded={panel !== false}
-            title={panel === true ? "Close review controls" : "Open review controls"}
-            onClick={togglePanel}
-          >
-            <PanelLeft />
-          </Button>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-baseline gap-2">
-              <span className="font-display text-sm font-semibold tracking-tight sm:text-base">
-                Auris
-              </span>
-              <span className="hidden text-[0.6875rem] text-muted md:inline">
-                EEG review workstation
-              </span>
-            </div>
-          </div>
-          <div className="hidden min-w-0 max-w-[min(36vw,24rem)] items-center gap-2 lg:flex">
-            <label className="sr-only" htmlFor="sound-mode">
-              Sound mode
-            </label>
-            <select
-              id="sound-mode"
-              value={soundMode}
-              onChange={(event) => setSoundMode(event.currentTarget.value as typeof soundMode)}
-              className="h-8 rounded-sm border border-border bg-bg px-2 text-xs font-medium text-fg outline-none focus:border-accent"
-            >
-              <option value="off">Sound off</option>
-              <option value="evidence">Evidence</option>
-              <option value="hybrid">Hybrid</option>
-              <option value="experimental">Experimental</option>
-              <option value="musical">Musical</option>
-            </select>
-            <p className="min-w-0 truncate text-[0.6875rem] text-muted" aria-live="polite">
-              {soundStatus}
-            </p>
-          </div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".edf,.EDF"
-            className="sr-only"
-            onChange={onFile}
-          />
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => fileRef.current?.click()}
-            title="Open EDF recording"
-          >
-            <Upload /> <span className="hidden sm:inline">Open EDF</span>
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-label="Focus EEG: hide workstation chrome"
-            title="Focus EEG (Ctrl/⌘+Shift+F)"
-            onClick={toggleFocusEeg}
-            className="hidden sm:inline-flex"
-          >
-            <Scan aria-hidden="true" /> <span>Focus EEG</span>
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-            title={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-            onClick={() => {
-              if (!document.fullscreenElement) void document.documentElement.requestFullscreen?.();
-              else void document.exitFullscreen?.();
-            }}
-          >
-            <Expand className={fullscreen ? "rotate-180" : undefined} />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label="Keyboard shortcuts"
-            onClick={() => setKeysOpen(true)}
-          >
-            <Keyboard />
-          </Button>
-          <Button size="icon" variant="ghost" aria-label="About" onClick={() => setAboutOpen(true)}>
-            <Info />
-          </Button>
-        </header>
+        <Transport
+          onOpenFile={() => fileRef.current?.click()}
+          onTogglePanel={togglePanel}
+          onToggleFocus={toggleFocusEeg}
+          onToggleFullscreen={() => {
+            if (!document.fullscreenElement) void document.documentElement.requestFullscreen?.();
+            else void document.exitFullscreen?.();
+          }}
+          onAbout={() => setAboutOpen(true)}
+        />
       )}
-
-      {!focusEeg && <Transport />}
 
       <div className="relative flex min-h-0 flex-1">
         <div
@@ -211,7 +100,6 @@ export function Workstation() {
           />
         )}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {!focusEeg && <ReviewBar />}
           <WaveformView />
         </div>
       </div>

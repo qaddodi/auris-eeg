@@ -1,36 +1,30 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import {
-  Download,
-  Pause,
-  Play,
-  Square,
-  Repeat,
-  ZoomIn,
-  ZoomOut,
-  Scan,
-  Keyboard,
+  Download, Expand, Eye, EyeOff, Info, Keyboard, MoreHorizontal, PanelLeft, Pause, Play,
+  Repeat, Scan, Square, Upload, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { formatTime } from "@/lib/utils";
 import { VIEW_PRESETS } from "@/lib/eeg/view";
-import { timeScaleFor } from "@/lib/eeg/musify";
-import { playback } from "@/lib/eeg/audio";
-import { BAND_LABELS, readoutAt, type BandName } from "@/lib/eeg/spectrum";
-import { recordingClockAt } from "@/lib/eeg/recording-clock";
+import { formatTime } from "@/lib/utils";
 import { eegNow, useEegStore } from "@/store/eeg-store";
-import { cn } from "@/lib/utils";
 
-const BAND_KEYS: BandName[] = ["delta", "theta", "alpha", "beta", "gamma"];
+interface TransportProps {
+  onOpenFile: () => void;
+  onTogglePanel: () => void;
+  onToggleFocus: () => void;
+  onToggleFullscreen: () => void;
+  onAbout: () => void;
+}
 
-export function Transport() {
+const selectClass = "h-8 rounded-sm border border-border bg-bg px-2 text-xs text-fg outline-none focus:border-accent";
+
+export function Transport({ onOpenFile, onTogglePanel, onToggleFocus, onToggleFullscreen, onAbout }: TransportProps) {
   const playing = useEegStore((s) => s.playing);
   const loop = useEegStore((s) => s.loop);
   const follow = useEegStore((s) => s.followPlayhead);
-  const mix = useEegStore((s) => s.mix);
   const segment = useEegStore((s) => s.segment);
-  const recording = useEegStore((s) => s.recording);
   const togglePlay = useEegStore((s) => s.togglePlay);
   const stop = useEegStore((s) => s.stop);
   const setLoop = useEegStore((s) => s.setLoop);
@@ -40,259 +34,108 @@ export function Transport() {
   const setFollow = useEegStore((s) => s.setFollow);
   const setKeysOpen = useEegStore((s) => s.setKeysOpen);
   const viewDuration = useEegStore((s) => s.viewDuration);
-  const sonify = useEegStore((s) => s.sonify);
   const soundMode = useEegStore((s) => s.soundMode);
+  const setSoundMode = useEegStore((s) => s.setSoundMode);
   const evidencePreparation = useEegStore((s) => s.evidencePreparation);
   const evidenceReason = useEegStore((s) => s.evidenceReason);
+  const showDsa = useEegStore((s) => s.showDsa);
+  const setShowDsa = useEegStore((s) => s.setShowDsa);
   const playheadEeg = useEegStore((s) => s.playheadEeg);
+  const hiddenTrackIds = useEegStore((s) => s.hiddenTrackIds);
+  const toggleTrackVisibility = useEegStore((s) => s.toggleTrackVisibility);
   const eegRef = useRef<HTMLSpanElement>(null);
-  const recordingClockRef = useRef<HTMLSpanElement>(null);
-  const audioRef = useRef<HTMLSpanElement>(null);
-  const hzRef = useRef<HTMLSpanElement>(null);
-  const uvRef = useRef<HTMLSpanElement>(null);
-  const bandRef = useRef<HTMLSpanElement>(null);
-  const barsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const update = () => {
-      const s = useEegStore.getState();
-      const t = s.playing ? eegNow(s) : s.playheadEeg;
-      if (eegRef.current) eegRef.current.textContent = formatTime(t, true);
-      if (recordingClockRef.current) {
-        const header = s.recording?.header;
-        recordingClockRef.current.textContent = header
-          ? (recordingClockAt(header.startDate, header.startTime, t) ?? "—")
-          : "—";
-      }
-      if (audioRef.current) audioRef.current.textContent = `${playback.currentTime().toFixed(2)}s`;
-      if (!s.segment) return;
-      const r = readoutAt(s.segment.tracks, t, s.dsa);
-      if (hzRef.current) hzRef.current.textContent = r.hz > 0.2 ? r.hz.toFixed(1) : "—";
-      if (uvRef.current) uvRef.current.textContent = r.uv.toFixed(0);
-      if (bandRef.current) {
-        bandRef.current.textContent = r.hz > 0.2 ? r.band : "—";
-        bandRef.current.style.color = `var(--color-band-${r.band})`;
-      }
-      if (barsRef.current && r.l) {
-        const kids = barsRef.current.querySelectorAll("[data-band]");
-        kids.forEach((el) => {
-          const id = el.getAttribute("data-band") as BandName | null;
-          if (!id) return;
-          const v = ((r.l?.[id] ?? 0) + (r.r?.[id] ?? 0)) / 2;
-          (el as HTMLElement).style.height = `${Math.round(Math.min(1, v * 2.2) * 100)}%`;
-        });
-      }
+      const state = useEegStore.getState();
+      const time = state.playing ? eegNow(state) : state.playheadEeg;
+      if (eegRef.current) eegRef.current.textContent = formatTime(time, true);
     };
     update();
     if (!playing) return;
     let raf = 0;
-    const loopFn = () => {
+    const loopFrame = () => {
       update();
-      raf = requestAnimationFrame(loopFn);
+      raf = requestAnimationFrame(loopFrame);
     };
-    raf = requestAnimationFrame(loopFn);
+    raf = requestAnimationFrame(loopFrame);
     return () => cancelAnimationFrame(raf);
-  }, [playing, playheadEeg, segment]);
+  }, [playing, playheadEeg]);
 
-  const soundActive =
-    soundMode === "experimental" ||
-    soundMode === "musical" ||
-    ((soundMode === "evidence" || soundMode === "hybrid") && Boolean(evidencePreparation));
-  const factor = soundMode === "experimental" || soundMode === "musical" ? timeScaleFor(sonify) : 1;
   const total = segment?.duration ?? 0;
-  const showingAll = total > 0 && viewDuration >= total - 1e-6;
-  const hasRecordingClock = recording
-    ? recordingClockAt(recording.header.startDate, recording.header.startTime, 0) !== null
-    : false;
+  const selectedDuration = total > 0 && viewDuration >= total - 1e-6 ? "all" : String(viewDuration);
+  const isPreset = VIEW_PRESETS.some((duration) => Math.abs(duration - viewDuration) < 1e-6);
+  const soundActive = soundMode === "experimental" || soundMode === "musical" ||
+    ((soundMode === "evidence" || soundMode === "hybrid") && Boolean(evidencePreparation));
 
   return (
-    <div className="transport-bar flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border bg-surface px-2 py-1.5 sm:gap-2 sm:px-3">
-      <div className="flex items-center gap-1">
-        <Button
-          size="icon"
-          variant="secondary"
-          aria-label={playing ? "Pause" : "Play"}
-          onClick={() => void togglePlay()}
-          disabled={!segment}
-        >
-          {playing ? <Pause /> : <Play className="ml-px" />}
-        </Button>
-        <Button size="icon" variant="ghost" aria-label="Stop" onClick={stop}>
-          <Square />
-        </Button>
-        <Button
-          size="icon"
-          variant={loop ? "default" : "ghost"}
-          aria-label="Loop"
-          onClick={() => setLoop(!loop)}
-        >
-          <Repeat />
-        </Button>
-        <Button
-          size="sm"
-          variant={follow ? "default" : "ghost"}
-          aria-label={follow ? "Disable follow playhead" : "Enable follow playhead"}
-          aria-pressed={follow}
-          title="Follow playhead (F)"
-          onClick={() => setFollow(!follow)}
-        >
-          <Scan /> <span className="hidden sm:inline">Follow</span>
-        </Button>
-      </div>
-
-      <div
-        className="hidden min-w-0 max-w-52 items-baseline gap-2 truncate border-l border-border pl-2 font-mono text-[0.6875rem] text-muted md:flex"
-        title={recording?.name ?? "No recording loaded"}
-      >
-        <span className="truncate text-fg">{recording?.name ?? "No recording"}</span>
-        {segment && (
-          <span className="shrink-0 text-subtle">{segment.tracks[0]?.sampleRate ?? 0} Hz</span>
-        )}
-      </div>
-
-      <div className="flex items-center gap-1">
-        <Button size="icon" variant="ghost" aria-label="Zoom out" onClick={() => zoomAt(1.25)}>
-          <ZoomOut />
-        </Button>
-        <Button size="icon" variant="ghost" aria-label="Zoom in" onClick={() => zoomAt(1 / 1.25)}>
-          <ZoomIn />
-        </Button>
-        <div className="hidden items-center gap-1 sm:flex" aria-label="Timebase presets">
-          {VIEW_PRESETS.map((d) => (
-            <button
-              key={d}
-              type="button"
-              onClick={() => setViewDuration(d)}
-              className={cn(
-                "h-7 rounded-sm px-2 text-[0.6875rem] font-semibold tabular-nums",
-                Math.abs(viewDuration - d) < 0.05
-                  ? "bg-accent text-accent-fg"
-                  : "text-muted hover:bg-surface-2 hover:text-fg",
-              )}
-            >
-              {d}s
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => total && setViewDuration(total)}
-            className={cn(
-              "h-7 rounded-sm px-2 text-[0.6875rem] font-semibold",
-              showingAll
-                ? "bg-accent text-accent-fg"
-                : "text-muted hover:bg-surface-2 hover:text-fg",
-            )}
-          >
-            All
+    <div className="transport-bar relative flex h-11 shrink-0 items-center gap-1.5 border-b border-border bg-surface px-2 sm:gap-2 sm:px-3">
+      <Button size="iconSm" variant="ghost" aria-label="Open review controls" onClick={onTogglePanel}><PanelLeft /></Button>
+      <span className="hidden font-display text-sm font-semibold tracking-tight sm:inline">Auris</span>
+      <Button size="sm" variant="secondary" onClick={onOpenFile} title="Open EDF recording"><Upload /><span className="hidden sm:inline">Open</span></Button>
+      <span className="mx-0.5 h-5 w-px bg-border" aria-hidden="true" />
+      <Button size="iconSm" variant="secondary" aria-label={playing ? "Pause" : "Play"} onClick={() => void togglePlay()} disabled={!segment}>
+        {playing ? <Pause /> : <Play className="ml-px" />}
+      </Button>
+      <Button size="iconSm" variant="ghost" aria-label="Stop" onClick={stop}><Square /></Button>
+      <Button size="iconSm" variant="ghost" aria-label="Zoom out" onClick={() => zoomAt(1.25)}><ZoomOut /></Button>
+      <select className={`${selectClass} w-[4.75rem]`} aria-label="Time window" value={selectedDuration}
+        onChange={(event) => setViewDuration(event.currentTarget.value === "all" ? total : Number(event.currentTarget.value))}>
+        {!isPreset && selectedDuration !== "all" && <option value={selectedDuration}>{viewDuration.toFixed(1)}s</option>}
+        {VIEW_PRESETS.map((duration) => <option key={duration} value={duration}>{duration}s</option>)}
+        <option value="all">All</option>
+      </select>
+      <Button size="iconSm" variant="ghost" aria-label="Zoom in" onClick={() => zoomAt(1 / 1.25)}><ZoomIn /></Button>
+      <select className={`${selectClass} hidden w-[7.5rem] md:block`} aria-label="Sound mode" value={soundMode}
+        onChange={(event) => setSoundMode(event.currentTarget.value as typeof soundMode)}>
+        <SoundOptions />
+      </select>
+      <div className="min-w-0 flex-1" />
+      <span className="font-mono text-xs tabular-nums text-muted">EEG <span ref={eegRef} className="text-fg">{formatTime(playheadEeg, true)}</span></span>
+      <details className="group relative">
+        <summary className="grid size-8 list-none place-items-center rounded-sm text-muted hover:bg-surface-2 hover:text-fg [&::-webkit-details-marker]:hidden" aria-label="More controls"><MoreHorizontal className="size-4" /></summary>
+        <div className="absolute right-0 top-9 z-50 grid w-56 gap-1 rounded-md border border-border bg-surface p-2 shadow-2xl">
+          <select className={`${selectClass} w-full md:hidden`} aria-label="Sound mode" value={soundMode}
+            onChange={(event) => setSoundMode(event.currentTarget.value as typeof soundMode)}><SoundOptions /></select>
+          <MenuButton onClick={() => setFollow(!follow)} icon={<Scan />} label={follow ? "Stop following" : "Follow playhead"} />
+          <MenuButton onClick={() => setLoop(!loop)} icon={<Repeat />} label={loop ? "Disable loop" : "Loop playback"} />
+          <MenuButton onClick={() => setShowDsa(!showDsa)} icon={showDsa ? <EyeOff /> : <Eye />} label={showDsa ? "Hide DSA" : "Show DSA"} />
+          <MenuButton onClick={onToggleFocus} icon={<Scan />} label="Focus EEG" />
+          <MenuButton onClick={onToggleFullscreen} icon={<Expand />} label="Toggle fullscreen" />
+          <MenuButton onClick={() => setKeysOpen(true)} icon={<Keyboard />} label="Keyboard shortcuts" />
+          <MenuButton onClick={onAbout} icon={<Info />} label="About Auris" />
+          {segment && (
+            <div className="mt-1 border-t border-border pt-2">
+              <p className="mb-1 px-2 text-[0.625rem] font-semibold uppercase tracking-wide text-subtle">Channels</p>
+              <div className="max-h-40 overflow-y-auto">
+                {segment.tracks.filter((track) => track.kind !== "extra").map((track) => {
+                  const hidden = hiddenTrackIds.includes(track.id);
+                  return (
+                    <button key={track.id} type="button" onClick={() => toggleTrackVisibility(track.id)}
+                      className="flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left font-mono text-[0.6875rem] text-muted hover:bg-surface-2 hover:text-fg">
+                      {hidden ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                      <span className="truncate">{track.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <button type="button" disabled={!segment || !soundActive} onClick={download}
+            title={!soundActive ? (evidenceReason ?? "Choose a sound mode first") : undefined}
+            className="flex h-8 items-center gap-2 rounded-sm px-2 text-left text-xs text-muted hover:bg-surface-2 hover:text-fg disabled:opacity-40">
+            <Download className="size-4" /> Download WAV
           </button>
         </div>
-      </div>
-
-      <div
-        ref={barsRef}
-        className="hidden h-7 items-end gap-0.5 sm:flex"
-        title="Live band power at the playhead"
-      >
-        {BAND_KEYS.map((id) => (
-          <span
-            key={id}
-            data-band={id}
-            className="w-1.5 rounded-sm"
-            style={{
-              height: "20%",
-              background: `var(--color-band-${id})`,
-            }}
-          />
-        ))}
-      </div>
-      <div
-        className="hidden items-baseline gap-2 rounded-sm bg-bg px-2 py-1 font-mono text-[0.6875rem] tabular-nums text-muted sm:flex"
-        title="Cursor readout at the EEG playhead"
-      >
-        <span>
-          <span ref={hzRef} className="text-fg">
-            —
-          </span>{" "}
-          Hz
-        </span>
-        <span ref={bandRef} className="uppercase">
-          —
-        </span>
-        <span>
-          <span ref={uvRef} className="text-fg">
-            —
-          </span>{" "}
-          µV
-        </span>
-        <span className="hidden xl:inline text-subtle">
-          {BAND_LABELS.map((b) => b.glyph).join(" ")}
-        </span>
-      </div>
-
-      <div className="min-w-0 flex-1" />
-
-      <div className="flex items-baseline gap-3 font-mono text-xs tabular-nums text-muted">
-        <span>
-          EEG{" "}
-          <span ref={eegRef} className="text-fg">
-            {formatTime(0, true)}
-          </span>
-        </span>
-        {hasRecordingClock && (
-          <span
-            className="hidden items-baseline gap-1 sm:inline-flex"
-            title="Absolute EDF recording clock; timezone is not specified by EDF"
-          >
-            <span className="text-subtle">ABS</span>
-            <span ref={recordingClockRef} className="text-fg">
-              {recording
-                ? (recordingClockAt(
-                    recording.header.startDate,
-                    recording.header.startTime,
-                    playheadEeg,
-                  ) ?? "—")
-                : "—"}
-            </span>
-          </span>
-        )}
-        <span className="hidden sm:inline">
-          window <span className="text-fg">{viewDuration.toFixed(viewDuration < 10 ? 1 : 0)}s</span>
-        </span>
-        {soundActive ? (
-          <span className="hidden sm:inline">
-            audio{" "}
-            <span ref={audioRef} className="text-fg">
-              {(mix?.duration ?? 0).toFixed(2)}s
-            </span>
-          </span>
-        ) : (
-          <span className="hidden sm:inline text-subtle">visual</span>
-        )}
-        <span>{factor}×</span>
-      </div>
-      <Button
-        size="icon"
-        variant="ghost"
-        aria-label="Keyboard shortcuts"
-        onClick={() => setKeysOpen(true)}
-      >
-        <Keyboard />
-      </Button>
-      <Button
-        size="sm"
-        variant="secondary"
-        disabled={!segment || !soundActive}
-        title={
-          soundActive
-            ? "Download mapped WAV"
-            : soundMode === "off"
-              ? "Choose a sound mode to enable mapped WAV export"
-              : (evidenceReason ?? "This recording is not compatible with the selected sound mode")
-        }
-        onClick={download}
-      >
-        <Download /> WAV
-      </Button>
+      </details>
     </div>
   );
+}
+
+function SoundOptions() {
+  return <><option value="off">Sound off</option><option value="evidence">Evidence</option><option value="hybrid">Hybrid</option><option value="experimental">Experimental</option><option value="musical">Musical</option></>;
+}
+
+function MenuButton({ onClick, icon, label }: { onClick: () => void; icon: ReactNode; label: string }) {
+  return <button type="button" onClick={onClick} className="flex h-8 items-center gap-2 rounded-sm px-2 text-left text-xs text-muted hover:bg-surface-2 hover:text-fg"><span className="[&>svg]:size-4">{icon}</span>{label}</button>;
 }
