@@ -39,6 +39,10 @@ export function processSegment(
   const rec = readRecords(recording.buffer, recording.header, start, duration);
   const available = derivations.filter((d) => d.available);
   const tracks: ProcessedTrack[] = available.map((d) => {
+    const sourceRates = d.sources.map((index) => recording.header.signals[index]?.sampleRate);
+    if (sourceRates.some((rate) => rate == null || rate !== d.sampleRate)) {
+      throw new Error(`Cannot process ${d.label}: derivation source rates do not match.`);
+    }
     const raw = applyDerivation(rec.samples, d);
     const filtered = applyFilters(raw, d.sampleRate, filters);
     return {
@@ -95,7 +99,7 @@ export function mixerTracksFrom(
   settings: SonifySettings,
   combine: CombineMode,
 ): MixerTrack[] {
-  const musical = settings.mode === "choir";
+  const musical = settings.mode === "choir" || settings.mode === "ambient";
   if (musical) {
     const mix = mixProcessed(processed, trackState, settings, combine);
     if (mix.left.length === 0) return [];
@@ -222,8 +226,8 @@ export function buildRepro(opts: {
   const method =
     opts.settings.mode === "direct"
       ? "direct time compression of the waveform"
-      : opts.settings.mode === "choir"
-        ? `just-intonation 1/f choir (${opts.settings.scale})`
+      : opts.settings.mode === "choir" || opts.settings.mode === "ambient"
+        ? `harmonic EEG band choir (${opts.settings.scale})`
         : opts.settings.mode === "pulse"
           ? "pulse (amplitude follows |wave|)"
           : opts.settings.mode === "piano"

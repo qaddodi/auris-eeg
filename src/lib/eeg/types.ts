@@ -4,9 +4,8 @@ export type ChannelKind = "eeg" | "ekg" | "eog" | "emg" | "extra" | "dc" | "othe
 
 export type MontageKind = "original" | "double-banana" | "transverse" | "custom";
 
-export type SonifyMode = "contour" | "choir" | "pulse" | "direct" | "piano" | "pen";
-
-export type ColorMode = "hemi" | "band";
+export type SonifyMode =
+  "contour" | "ambient" | "choir" | "pulse" | "direct" | "piano" | "pen" | "loui" | "loui-hybrid";
 
 export type ScaleName = "pentatonic" | "dorian" | "harmonic" | "major";
 
@@ -139,6 +138,7 @@ export interface SonifySettings {
   rootMidi: number;
   rangeSemitones: number;
   quantize: boolean;
+  /** Internal safety/master gain. Deliberately not exposed as a global slider. */
   volume: number;
 }
 
@@ -146,7 +146,10 @@ export interface Annotation {
   id: string;
   start: number;
   end: number;
+  /** Legacy single-track spelling retained for existing exports and callers. */
   trackId: string | null;
+  /** Optional multi-track target list. When present, it is authoritative. */
+  trackIds?: string[];
   type: MorphologyType;
   text: string;
   source: AnnotationSource;

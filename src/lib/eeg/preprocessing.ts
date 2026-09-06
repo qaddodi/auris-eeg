@@ -10,6 +10,14 @@ export function subtractMean(x: Float32Array): Float32Array {
   return out;
 }
 
+/** Subtract a stable, precomputed recording-level offset from a bounded window. */
+export function subtractOffset(x: Float32Array, offset: number): Float32Array {
+  const out = new Float32Array(x.length);
+  const safeOffset = Number.isFinite(offset) ? offset : 0;
+  for (let i = 0; i < x.length; i++) out[i] = x[i]! - safeOffset;
+  return out;
+}
+
 /** Direct-form II transposed biquad. coefs: [b0,b1,b2,a1,a2] (a0=1). */
 function biquad(x: Float32Array, c: number[]): Float32Array {
   const [b0, b1, b2, a1, a2] = c as [number, number, number, number, number];
@@ -76,6 +84,7 @@ function rbjNotch(fs: number, f0: number, q = 30): number[] {
 }
 
 export function bandpassRange(x: Float32Array, fs: number, lo: number, hi: number): Float32Array {
+  validateFilterInputs(fs, lo, hi);
   if (x.length < 8) return new Float32Array(x);
   const nyquist = fs / 2 - 1;
   const l = Math.max(0.05, Math.min(lo, nyquist * 0.8));
@@ -85,6 +94,7 @@ export function bandpassRange(x: Float32Array, fs: number, lo: number, hi: numbe
 
 /** Single-pass bandpass for sonify (phase not clinically meaningful in audio). */
 export function bandpassForward(x: Float32Array, fs: number, lo: number, hi: number): Float32Array {
+  validateFilterInputs(fs, lo, hi);
   if (x.length < 8) return new Float32Array(x);
   const nyquist = fs / 2 - 1;
   const l = Math.max(0.05, Math.min(lo, nyquist * 0.8));
@@ -105,8 +115,28 @@ export function envelopeFollow(x: Float32Array, fs: number, envHz: number): Floa
   return y;
 }
 
-export function applyFilters(x: Float32Array, fs: number, settings: FilterSettings): Float32Array {
-  let y = settings.removeDc ? subtractMean(x) : new Float32Array(x);
+export function applyFilters(
+  x: Float32Array,
+  fs: number,
+  settings: FilterSettings,
+  options: { dcOffset?: number } = {},
+): Float32Array {
+  if (!Number.isFinite(fs) || fs <= 2) throw new Error("Sample rate must be greater than 2 Hz.");
+  for (const [name, value] of [["LFF", settings.lff], ["HFF", settings.hff], ["bandpass low", settings.bandpassLow], ["bandpass high", settings.bandpassHigh]] as const) {
+    if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be a finite, non-negative frequency.`);
+  }
+  if (settings.bandpass) validateFilterInputs(fs, settings.bandpassLow, settings.bandpassHigh);
+  const nyquistHz = fs / 2;
+  if (settings.lff > 0 && settings.lff >= nyquistHz) throw new Error("LFF must be below Nyquist.");
+  if (settings.hff > 0 && settings.hff >= nyquistHz) throw new Error("HFF must be below Nyquist.");
+  if (settings.lff > 0 && settings.hff > 0 && settings.hff <= settings.lff) {
+    throw new Error("HFF must be greater than LFF.");
+  }
+  let y = settings.removeDc
+    ? options.dcOffset == null
+      ? subtractMean(x)
+      : subtractOffset(x, options.dcOffset)
+    : new Float32Array(x);
   if (y.length < 8) return y;
   const nyquist = fs / 2 - 1;
   const lo =
@@ -125,6 +155,13 @@ export function applyFilters(x: Float32Array, fs: number, settings: FilterSettin
     y = filtfilt(y, rbjNotch(fs, 60));
   }
   return y;
+}
+
+function validateFilterInputs(fs: number, lo: number, hi: number): void {
+  if (!Number.isFinite(fs) || fs <= 2) throw new Error("Sample rate must be greater than 2 Hz.");
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo <= 0 || hi <= lo || hi >= fs / 2) {
+    throw new Error("Bandpass frequencies must satisfy 0 < low < high < Nyquist.");
+  }
 }
 
 export function percentileAbs(x: Float32Array, p: number): number {

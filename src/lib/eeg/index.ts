@@ -10,3 +10,5 @@ export * from "./synthetic.ts";
 export * from "./view.ts";
 export * from "./shortcuts.ts";
 export * from "./spectrum.ts";
+export * from "./annotations.ts";
+export * from "./annotation-layout.ts";

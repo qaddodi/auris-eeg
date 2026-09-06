@@ -18,6 +18,7 @@ import { VIEW_PRESETS } from "@/lib/eeg/view";
 import { timeScaleFor } from "@/lib/eeg/musify";
 import { playback } from "@/lib/eeg/audio";
 import { BAND_LABELS, readoutAt, type BandName } from "@/lib/eeg/spectrum";
+import { recordingClockAt } from "@/lib/eeg/recording-clock";
 import { eegNow, useEegStore } from "@/store/eeg-store";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +30,7 @@ export function Transport() {
   const follow = useEegStore((s) => s.followPlayhead);
   const mix = useEegStore((s) => s.mix);
   const segment = useEegStore((s) => s.segment);
+  const recording = useEegStore((s) => s.recording);
   const togglePlay = useEegStore((s) => s.togglePlay);
   const stop = useEegStore((s) => s.stop);
   const setLoop = useEegStore((s) => s.setLoop);
@@ -39,7 +41,12 @@ export function Transport() {
   const setKeysOpen = useEegStore((s) => s.setKeysOpen);
   const viewDuration = useEegStore((s) => s.viewDuration);
   const sonify = useEegStore((s) => s.sonify);
+  const soundMode = useEegStore((s) => s.soundMode);
+  const evidencePreparation = useEegStore((s) => s.evidencePreparation);
+  const evidenceReason = useEegStore((s) => s.evidenceReason);
+  const playheadEeg = useEegStore((s) => s.playheadEeg);
   const eegRef = useRef<HTMLSpanElement>(null);
+  const recordingClockRef = useRef<HTMLSpanElement>(null);
   const audioRef = useRef<HTMLSpanElement>(null);
   const hzRef = useRef<HTMLSpanElement>(null);
   const uvRef = useRef<HTMLSpanElement>(null);
@@ -49,8 +56,14 @@ export function Transport() {
   useEffect(() => {
     const update = () => {
       const s = useEegStore.getState();
-      const t = eegNow(s);
+      const t = s.playing ? eegNow(s) : s.playheadEeg;
       if (eegRef.current) eegRef.current.textContent = formatTime(t, true);
+      if (recordingClockRef.current) {
+        const header = s.recording?.header;
+        recordingClockRef.current.textContent = header
+          ? (recordingClockAt(header.startDate, header.startTime, t) ?? "—")
+          : "—";
+      }
       if (audioRef.current) audioRef.current.textContent = `${playback.currentTime().toFixed(2)}s`;
       if (!s.segment) return;
       const r = readoutAt(s.segment.tracks, t, s.dsa);
@@ -79,21 +92,28 @@ export function Transport() {
     };
     raf = requestAnimationFrame(loopFn);
     return () => cancelAnimationFrame(raf);
-  }, [playing, segment]);
+  }, [playing, playheadEeg, segment]);
 
-  const factor = timeScaleFor(sonify);
+  const soundActive =
+    soundMode === "experimental" ||
+    soundMode === "musical" ||
+    ((soundMode === "evidence" || soundMode === "hybrid") && Boolean(evidencePreparation));
+  const factor = soundMode === "experimental" || soundMode === "musical" ? timeScaleFor(sonify) : 1;
   const total = segment?.duration ?? 0;
   const showingAll = total > 0 && viewDuration >= total - 1e-6;
+  const hasRecordingClock = recording
+    ? recordingClockAt(recording.header.startDate, recording.header.startTime, 0) !== null
+    : false;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-border bg-surface px-3 py-2">
+    <div className="transport-bar flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border bg-surface px-2 py-1.5 sm:gap-2 sm:px-3">
       <div className="flex items-center gap-1">
         <Button
           size="icon"
           variant="secondary"
           aria-label={playing ? "Pause" : "Play"}
           onClick={() => void togglePlay()}
-          disabled={!mix || mix.duration <= 0}
+          disabled={!segment}
         >
           {playing ? <Pause /> : <Play className="ml-px" />}
         </Button>
@@ -109,41 +129,42 @@ export function Transport() {
           <Repeat />
         </Button>
         <Button
-          size="icon"
+          size="sm"
           variant={follow ? "default" : "ghost"}
-          aria-label="Follow playhead"
+          aria-label={follow ? "Disable follow playhead" : "Enable follow playhead"}
+          aria-pressed={follow}
           title="Follow playhead (F)"
           onClick={() => setFollow(!follow)}
         >
-          <Scan />
+          <Scan /> <span className="hidden sm:inline">Follow</span>
         </Button>
       </div>
 
+      <div
+        className="hidden min-w-0 max-w-52 items-baseline gap-2 truncate border-l border-border pl-2 font-mono text-[0.6875rem] text-muted md:flex"
+        title={recording?.name ?? "No recording loaded"}
+      >
+        <span className="truncate text-fg">{recording?.name ?? "No recording"}</span>
+        {segment && (
+          <span className="shrink-0 text-subtle">{segment.tracks[0]?.sampleRate ?? 0} Hz</span>
+        )}
+      </div>
+
       <div className="flex items-center gap-1">
-        <Button
-          size="icon"
-          variant="ghost"
-          aria-label="Zoom out"
-          onClick={() => zoomAt(1.25)}
-        >
+        <Button size="icon" variant="ghost" aria-label="Zoom out" onClick={() => zoomAt(1.25)}>
           <ZoomOut />
         </Button>
-        <Button
-          size="icon"
-          variant="ghost"
-          aria-label="Zoom in"
-          onClick={() => zoomAt(1 / 1.25)}
-        >
+        <Button size="icon" variant="ghost" aria-label="Zoom in" onClick={() => zoomAt(1 / 1.25)}>
           <ZoomIn />
         </Button>
-        <div className="hidden items-center gap-1 md:flex">
+        <div className="hidden items-center gap-1 sm:flex" aria-label="Timebase presets">
           {VIEW_PRESETS.map((d) => (
             <button
               key={d}
               type="button"
               onClick={() => setViewDuration(d)}
               className={cn(
-                "h-7 rounded-full px-2 text-[0.6875rem] tabular-nums",
+                "h-7 rounded-sm px-2 text-[0.6875rem] font-semibold tabular-nums",
                 Math.abs(viewDuration - d) < 0.05
                   ? "bg-accent text-accent-fg"
                   : "text-muted hover:bg-surface-2 hover:text-fg",
@@ -156,8 +177,10 @@ export function Transport() {
             type="button"
             onClick={() => total && setViewDuration(total)}
             className={cn(
-              "h-7 rounded-full px-2 text-[0.6875rem]",
-              showingAll ? "bg-accent text-accent-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
+              "h-7 rounded-sm px-2 text-[0.6875rem] font-semibold",
+              showingAll
+                ? "bg-accent text-accent-fg"
+                : "text-muted hover:bg-surface-2 hover:text-fg",
             )}
           >
             All
@@ -182,13 +205,24 @@ export function Transport() {
           />
         ))}
       </div>
-      <div className="hidden items-baseline gap-2 font-mono text-[0.6875rem] tabular-nums text-muted lg:flex">
+      <div
+        className="hidden items-baseline gap-2 rounded-sm bg-bg px-2 py-1 font-mono text-[0.6875rem] tabular-nums text-muted sm:flex"
+        title="Cursor readout at the EEG playhead"
+      >
         <span>
-          <span ref={hzRef} className="text-fg">—</span> Hz
+          <span ref={hzRef} className="text-fg">
+            —
+          </span>{" "}
+          Hz
         </span>
-        <span ref={bandRef} className="uppercase">—</span>
+        <span ref={bandRef} className="uppercase">
+          —
+        </span>
         <span>
-          <span ref={uvRef} className="text-fg">—</span> µV
+          <span ref={uvRef} className="text-fg">
+            —
+          </span>{" "}
+          µV
         </span>
         <span className="hidden xl:inline text-subtle">
           {BAND_LABELS.map((b) => b.glyph).join(" ")}
@@ -199,20 +233,64 @@ export function Transport() {
 
       <div className="flex items-baseline gap-3 font-mono text-xs tabular-nums text-muted">
         <span>
-          EEG <span ref={eegRef} className="text-fg">{formatTime(0, true)}</span>
+          EEG{" "}
+          <span ref={eegRef} className="text-fg">
+            {formatTime(0, true)}
+          </span>
         </span>
+        {hasRecordingClock && (
+          <span
+            className="hidden items-baseline gap-1 sm:inline-flex"
+            title="Absolute EDF recording clock; timezone is not specified by EDF"
+          >
+            <span className="text-subtle">ABS</span>
+            <span ref={recordingClockRef} className="text-fg">
+              {recording
+                ? (recordingClockAt(
+                    recording.header.startDate,
+                    recording.header.startTime,
+                    playheadEeg,
+                  ) ?? "—")
+                : "—"}
+            </span>
+          </span>
+        )}
         <span className="hidden sm:inline">
           window <span className="text-fg">{viewDuration.toFixed(viewDuration < 10 ? 1 : 0)}s</span>
         </span>
-        <span className="hidden sm:inline">
-          audio <span ref={audioRef} className="text-fg">{(mix?.duration ?? 0).toFixed(2)}s</span>
-        </span>
+        {soundActive ? (
+          <span className="hidden sm:inline">
+            audio{" "}
+            <span ref={audioRef} className="text-fg">
+              {(mix?.duration ?? 0).toFixed(2)}s
+            </span>
+          </span>
+        ) : (
+          <span className="hidden sm:inline text-subtle">visual</span>
+        )}
         <span>{factor}×</span>
       </div>
-      <Button size="icon" variant="ghost" aria-label="Keyboard shortcuts" onClick={() => setKeysOpen(true)}>
+      <Button
+        size="icon"
+        variant="ghost"
+        aria-label="Keyboard shortcuts"
+        onClick={() => setKeysOpen(true)}
+      >
         <Keyboard />
       </Button>
-      <Button size="sm" variant="secondary" disabled={!segment} onClick={download}>
+      <Button
+        size="sm"
+        variant="secondary"
+        disabled={!segment || !soundActive}
+        title={
+          soundActive
+            ? "Download mapped WAV"
+            : soundMode === "off"
+              ? "Choose a sound mode to enable mapped WAV export"
+              : (evidenceReason ?? "This recording is not compatible with the selected sound mode")
+        }
+        onClick={download}
+      >
         <Download /> WAV
       </Button>
     </div>

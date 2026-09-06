@@ -23,10 +23,17 @@ export interface DsaFrame {
   r: Float32Array;
   nTime: number;
   nFreq: number;
+  fMin: number;
   fMax: number;
+  binHz: number;
+  windowSamples: number;
+  hopSamples: number;
+  windowSec: number;
+  hopSec: number;
   duration: number;
   sampleRate: number;
-  logMax: number;
+  dbMin: number;
+  dbMax: number;
 }
 
 export interface BandPowers {
@@ -65,7 +72,7 @@ export function freqWindow(
   for (let p = 0; p < nPix; p++) {
     const a = t0 + (p / nPix) * span;
     const b = t0 + ((p + 1) / nPix) * span;
-    let i0 = Math.max(0, Math.floor(a * sampleRate));
+    const i0 = Math.max(0, Math.floor(a * sampleRate));
     let i1 = Math.min(samples.length, Math.floor(b * sampleRate));
     if (i1 <= i0) i1 = Math.min(samples.length, i0 + 1);
     let zc = 0;
@@ -160,15 +167,21 @@ function bitReverseFft(re: Float32Array, im: Float32Array) {
   }
 }
 
+function nextPowerOfTwo(n: number): number {
+  let size = 1;
+  while (size < Math.max(2, n)) size <<= 1;
+  return size;
+}
+
 function hann(n: number, i: number): number {
   return 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / Math.max(1, n - 1));
 }
 
 export function fftPower(frame: Float32Array): Float32Array {
-  const n = frame.length;
+  const n = nextPowerOfTwo(frame.length);
   const re = new Float32Array(n);
   const im = new Float32Array(n);
-  for (let i = 0; i < n; i++) re[i] = frame[i]!;
+  for (let i = 0; i < frame.length; i++) re[i] = frame[i]!;
   bitReverseFft(re, im);
   const half = n >> 1;
   const mag = new Float32Array(half);
@@ -176,18 +189,33 @@ export function fftPower(frame: Float32Array): Float32Array {
   return mag;
 }
 
-export function spectrogram(x: Float32Array, fs: number, win = 256, hop = 64, fMax = 30): Float32Array {
-  const nFreq = Math.max(2, Math.floor((fMax * win) / fs) + 1);
-  const nTime = Math.max(1, Math.round((x.length - win) / hop) + 1);
+export function spectrogram(
+  x: Float32Array,
+  fs: number,
+  win = 256,
+  hop = 64,
+  fMax = 30,
+): Float32Array {
+  const fftN = nextPowerOfTwo(win);
+  const nFreq = Math.max(2, Math.floor((fMax * fftN) / fs) + 1);
+  const nTime = Math.max(1, Math.floor(Math.max(0, x.length - win) / Math.max(1, hop)) + 1);
   const out = new Float32Array(nTime * nFreq);
   const frame = new Float32Array(win);
+  let windowEnergy = 0;
+  for (let i = 0; i < win; i++) windowEnergy += hann(win, i) ** 2;
+  const normalization = Math.max(1e-12, fs * windowEnergy);
   for (let t = 0; t < nTime; t++) {
     const i0 = t * hop;
     for (let i = 0; i < win; i++) {
       frame[i] = (x[i0 + i] ?? 0) * hann(win, i);
     }
     const mag = fftPower(frame);
-    for (let f = 0; f < nFreq; f++) out[t * nFreq + f] = mag[f] ?? 0;
+    for (let f = 0; f < nFreq; f++) {
+      // One-sided PSD in physical units. Doubling non-DC bins preserves total
+      // power while making the dB readout interpretable.
+      const oneSided = f > 0 && f < mag.length - 1 ? 2 : 1;
+      out[t * nFreq + f] = ((mag[f] ?? 0) * oneSided) / normalization;
+    }
   }
   return out;
 }
@@ -206,70 +234,155 @@ function meanPowerSpec(
   });
   if (list.length === 0) return null;
   const fs = list[0]!.sampleRate;
-  const nFreq = Math.max(2, Math.floor((fMax * win) / fs) + 1);
+  const nFreq = Math.max(2, Math.floor((fMax * nextPowerOfTwo(win)) / fs) + 1);
   let acc: Float32Array | null = null;
-  let nTime = 1;
+  let nTime = Number.POSITIVE_INFINITY;
   for (const t of list) {
     const spec = spectrogram(t.samples, t.sampleRate, win, hop, fMax);
-    nTime = Math.max(1, Math.round((t.samples.length - win) / hop) + 1);
-    if (!acc) acc = spec;
-    else {
-      const m = Math.min(acc.length, spec.length);
-      for (let i = 0; i < m; i++) acc[i]! += spec[i]!;
+    const sourceNFreq = Math.max(2, Math.floor((fMax * nextPowerOfTwo(win)) / t.sampleRate) + 1);
+    nTime = Math.min(nTime, Math.max(1, Math.floor(Math.max(0, t.samples.length - win) / hop) + 1));
+    if (!acc) {
+      acc = new Float32Array(Math.max(1, nTime) * nFreq);
+      for (let ti = 0; ti < Math.max(1, nTime); ti++) {
+        for (let fi = 0; fi < nFreq; fi++) {
+          const hz = (fi * fs) / nextPowerOfTwo(win);
+          const sourceFi = Math.min(
+            sourceNFreq - 1,
+            Math.round((hz * nextPowerOfTwo(win)) / t.sampleRate),
+          );
+          acc[ti * nFreq + fi] = spec[ti * sourceNFreq + sourceFi] ?? 0;
+        }
+      }
+    } else {
+      const timeCount = Math.min(Math.max(1, nTime), Math.floor(spec.length / sourceNFreq));
+      for (let ti = 0; ti < timeCount; ti++) {
+        for (let fi = 0; fi < nFreq; fi++) {
+          const hz = (fi * fs) / nextPowerOfTwo(win);
+          const sourceFi = Math.min(
+            sourceNFreq - 1,
+            Math.round((hz * nextPowerOfTwo(win)) / t.sampleRate),
+          );
+          acc[ti * nFreq + fi] =
+            (acc[ti * nFreq + fi] ?? 0) + (spec[ti * sourceNFreq + sourceFi] ?? 0);
+        }
+      }
     }
   }
   const n = list.length;
+  const timeCount = Number.isFinite(nTime) ? Math.max(1, nTime) : 1;
   if (acc && n > 1) for (let i = 0; i < acc.length; i++) acc[i]! /= n;
-  return acc ? { spec: acc, nTime, nFreq, fs } : null;
+  return acc ? { spec: acc, nTime: timeCount, nFreq, fs } : null;
 }
 
-function logMaxOf(a: Float32Array, b: Float32Array): number {
-  let m = 1e-18;
+function dbOfPower(power: number): number {
+  return 10 * Math.log10(Math.max(1e-20, power));
+}
+
+function dbRangeOf(a: Float32Array, b: Float32Array): { min: number; max: number } {
   const step = Math.max(1, Math.floor((a.length + b.length) / 4000));
   const samples: number[] = [];
-  for (let i = 0; i < a.length; i += step) if (a[i]! > 0) samples.push(a[i]!);
-  for (let i = 0; i < b.length; i += step) if (b[i]! > 0) samples.push(b[i]!);
-  if (samples.length === 0) return 0;
+  for (let i = 0; i < a.length; i += step) samples.push(dbOfPower(a[i]!));
+  for (let i = 0; i < b.length; i += step) samples.push(dbOfPower(b[i]!));
+  if (samples.length === 0) return { min: -80, max: -20 };
   samples.sort((x, y) => x - y);
-  m = samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.96))] ?? m;
-  return Math.log10(m + 1e-12);
+  const max = samples[Math.floor(samples.length * 0.98)] ?? -20;
+  const low = samples[Math.floor(samples.length * 0.05)] ?? max - 48;
+  return { min: Math.min(max - 12, Math.max(max - 54, low)), max };
+}
+
+function remapSpec(
+  source: Float32Array,
+  sourceTime: number,
+  sourceFreq: number,
+  targetTime: number,
+  targetFreq: number,
+): Float32Array {
+  if (sourceTime === targetTime && sourceFreq === targetFreq) return source;
+  const out = new Float32Array(targetTime * targetFreq);
+  for (let ti = 0; ti < targetTime; ti++) {
+    const sourceTi = Math.min(sourceTime - 1, ti);
+    for (let fi = 0; fi < targetFreq; fi++) {
+      const sourceFi = Math.min(
+        sourceFreq - 1,
+        Math.round((fi / Math.max(1, targetFreq - 1)) * (sourceFreq - 1)),
+      );
+      out[ti * targetFreq + fi] = source[sourceTi * sourceFreq + sourceFi] ?? 0;
+    }
+  }
+  return out;
 }
 
 export function buildDsa(tracks: ProcessedTrack[], duration: number): DsaFrame | null {
   const eeg = tracks.filter((t) => t.kind === "eeg" && t.samples.length);
   if (eeg.length === 0) return null;
+  // A DSA is a hemispheric summary, not a second full-resolution waveform
+  // renderer. Evenly sample each side so large montages cannot monopolize the
+  // main thread while preserving a representative view of the recording.
+  const selectForDsa = (items: ProcessedTrack[], limit = 8) => {
+    if (items.length <= limit) return items;
+    return Array.from(
+      { length: limit },
+      (_, i) => items[Math.floor((i * (items.length - 1)) / (limit - 1))]!,
+    );
+  };
+  const dsaEeg = [
+    ...selectForDsa(eeg.filter((t) => t.laterality === "left")),
+    ...selectForDsa(eeg.filter((t) => t.laterality === "right")),
+  ];
+  const sourceTracks = dsaEeg.length > 0 ? dsaEeg : selectForDsa(eeg, 12);
   const fs = eeg[0]!.sampleRate;
-  const win = 256;
+  const win = Math.min(1024, Math.max(256, nextPowerOfTwo(Math.round(fs * 2))));
   let hop = 64;
-  const fMax = 30;
-  const nTimeGuess = Math.max(1, Math.round((eeg[0]!.samples.length - win) / hop) + 1);
-  if (nTimeGuess > 1400) hop = Math.max(64, Math.ceil((eeg[0]!.samples.length - win) / 1399));
-  let left = meanPowerSpec(eeg, "left", win, hop, fMax);
-  let right = meanPowerSpec(eeg, "right", win, hop, fMax);
+  const fMax = 45;
+  hop = Math.max(1, Math.floor(win / 4));
+  const nTimeGuess = Math.max(1, Math.floor(Math.max(0, eeg[0]!.samples.length - win) / hop) + 1);
+  if (nTimeGuess > 1400) hop = Math.max(hop, Math.ceil((eeg[0]!.samples.length - win) / 1399));
+  let left = meanPowerSpec(sourceTracks, "left", win, hop, fMax);
+  let right = meanPowerSpec(sourceTracks, "right", win, hop, fMax);
   if (!left && !right) {
-    const all = meanPowerSpec(eeg, "all", win, hop, fMax);
+    const all = meanPowerSpec(sourceTracks, "all", win, hop, fMax);
     if (!all) return null;
     left = all;
     right = all;
   }
   if (!left) left = right;
   if (!right) right = left;
+  const nTime = Math.min(left!.nTime, right!.nTime);
+  const nFreq = left!.nFreq;
+  const leftSpec = remapSpec(left!.spec, left!.nTime, left!.nFreq, nTime, nFreq);
+  const rightSpec = remapSpec(right!.spec, right!.nTime, right!.nFreq, nTime, nFreq);
+  const db = dbRangeOf(leftSpec, rightSpec);
   return {
-    l: left!.spec,
-    r: right!.spec,
-    nTime: left!.nTime,
-    nFreq: left!.nFreq,
+    l: leftSpec,
+    r: rightSpec,
+    nTime,
+    nFreq,
+    fMin: 0,
     fMax,
+    binHz: fMax / Math.max(1, left!.nFreq - 1),
+    windowSamples: win,
+    hopSamples: hop,
+    windowSec: win / fs,
+    hopSec: hop / fs,
     duration,
     sampleRate: fs,
-    logMax: logMaxOf(left!.spec, right!.spec),
+    dbMin: db.min,
+    dbMax: db.max,
   };
 }
 
 export function dsaColumn(frame: DsaFrame, t: number, side: "l" | "r"): Float32Array {
   const col = new Float32Array(frame.nFreq);
   if (frame.duration <= 0 || frame.nTime <= 0) return col;
-  const i = Math.max(0, Math.min(frame.nTime - 1, Math.floor((t / frame.duration) * frame.nTime)));
+  // DSA bins are anchored to the actual FFT hop, not a stretched pixel index.
+  // This keeps the cursor and the band readout aligned when a frame is capped.
+  const i = Math.max(
+    0,
+    Math.min(
+      frame.nTime - 1,
+      Math.floor((Math.max(0, t) - frame.windowSec / 2) / Math.max(1e-6, frame.hopSec)),
+    ),
+  );
   const src = side === "l" ? frame.l : frame.r;
   col.set(src.subarray(i * frame.nFreq, i * frame.nFreq + frame.nFreq));
   return col;
@@ -324,25 +437,34 @@ export function peakBand(p: BandPowers): BandName {
   return entries[0]![0];
 }
 
-/** Classic DSA ramp: black → teal → gold → white. `u` is 0–1 log power. */
+/** Perceptually uniform, color-vision-friendly viridis-style DSA ramp. */
 export function dsaRgb(u: number): [number, number, number] {
   const x = Math.max(0, Math.min(1, u));
-  if (x < 0.33) {
-    const t = x / 0.33;
-    return [8 + t * 20, 16 + t * 110, 24 + t * 90];
+  const stops: [number, number, number, number][] = [
+    [0, 68, 1, 84],
+    [0.25, 59, 82, 139],
+    [0.5, 33, 145, 140],
+    [0.75, 94, 201, 98],
+    [1, 253, 231, 37],
+  ];
+  for (let i = 1; i < stops.length; i++) {
+    const a = stops[i - 1]!;
+    const b = stops[i]!;
+    if (x <= b[0]) {
+      const t = (x - a[0]) / Math.max(1e-6, b[0] - a[0]);
+      return [a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t];
+    }
   }
-  if (x < 0.66) {
-    const t = (x - 0.33) / 0.33;
-    return [28 + t * 180, 126 + t * 70, 114 - t * 40];
-  }
-  const t = (x - 0.66) / 0.34;
-  return [208 + t * 36, 196 + t * 40, 74 + t * 160];
+  return [253, 231, 37];
 }
 
-export function dsaUnit(p: number, logMax: number): number {
-  const u = Math.log10(p + 1e-12) / Math.max(1e-6, logMax);
-  const x = Math.max(0, Math.min(1, (u + 0.12) / 1.12));
-  return Math.pow(x, 0.7);
+export function dsaDb(power: number): number {
+  return dbOfPower(power);
+}
+
+export function dsaUnit(power: number, dbMin: number, dbMax: number): number {
+  const u = (dsaDb(power) - dbMin) / Math.max(1, dbMax - dbMin);
+  return Math.max(0, Math.min(1, u));
 }
 
 export interface CursorReadout {
@@ -353,7 +475,11 @@ export interface CursorReadout {
   r: BandPowers | null;
 }
 
-export function readoutAt(tracks: ProcessedTrack[], t: number, dsa: DsaFrame | null): CursorReadout {
+export function readoutAt(
+  tracks: ProcessedTrack[],
+  t: number,
+  dsa: DsaFrame | null,
+): CursorReadout {
   const eeg = tracks.filter((tr) => tr.kind === "eeg" && tr.samples.length);
   let hz = 0;
   let uv = 0;

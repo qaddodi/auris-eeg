@@ -47,7 +47,11 @@ export function detectTransients(
   let i = 1;
   while (i < x.length - 1) {
     const v = x[i]!;
-    if (Math.abs(v) < thr || Math.abs(v) < Math.abs(x[i - 1]!) || Math.abs(v) < Math.abs(x[i + 1]!)) {
+    if (
+      Math.abs(v) < thr ||
+      Math.abs(v) < Math.abs(x[i - 1]!) ||
+      Math.abs(v) < Math.abs(x[i + 1]!)
+    ) {
       i++;
       continue;
     }
@@ -56,8 +60,6 @@ export function detectTransients(
     const t = i / fs;
     if (kind === "eog" && ms >= 80 && ms <= 450) {
       out.push(ev("blink", t - ms / 2000, t + ms / 2000, trackId, 0.7));
-    } else if (kind === "ekg" && ms >= 20 && ms <= 120) {
-      out.push(ev("qrs", t, t + 0.04, trackId, 0.75));
     } else if (kind === "eeg" && ms >= 20 && ms < 70) {
       out.push(ev("spike", t - 0.03, t + 0.04, trackId, 0.72));
     } else if (kind === "eeg" && ms >= 70 && ms <= 200) {
@@ -169,7 +171,14 @@ export function detectPeriodic(events: Annotation[], trackId: string): Annotatio
     const sd = Math.sqrt(iv.reduce((a, b) => a + (b - mean) ** 2, 0) / iv.length);
     if (sd / mean > 0.45) return;
     out.push(
-      ev("periodic", run[0]!.start, run[run.length - 1]!.end, trackId, 0.7, `~${(1 / mean).toFixed(1)} Hz`),
+      ev(
+        "periodic",
+        run[0]!.start,
+        run[run.length - 1]!.end,
+        trackId,
+        0.7,
+        `~${(1 / mean).toFixed(1)} Hz`,
+      ),
     );
   };
   for (let i = 1; i < trans.length; i++) {
@@ -185,7 +194,9 @@ export function detectPeriodic(events: Annotation[], trackId: string): Annotatio
 }
 
 function polyspikeFrom(spikes: Annotation[], trackId: string): Annotation[] {
-  const s = spikes.filter((e) => e.type === "spike" && e.trackId === trackId).sort((a, b) => a.start - b.start);
+  const s = spikes
+    .filter((e) => e.type === "spike" && e.trackId === trackId)
+    .sort((a, b) => a.start - b.start);
   const out: Annotation[] = [];
   for (let i = 0; i < s.length; i++) {
     let j = i + 1;
@@ -201,7 +212,8 @@ function polyspikeFrom(spikes: Annotation[], trackId: string): Annotation[] {
 export function detectMorphologies(tracks: ProcessedTrack[]): Annotation[] {
   const all: Annotation[] = [];
   const eeg = tracks.filter((t) => t.kind === "eeg");
-  const sample = eeg.length > 8 ? [eeg[0]!, eeg[Math.floor(eeg.length / 2)]!, eeg[eeg.length - 1]!] : eeg;
+  const sample =
+    eeg.length > 8 ? [eeg[0]!, eeg[Math.floor(eeg.length / 2)]!, eeg[eeg.length - 1]!] : eeg;
   for (const tr of tracks) {
     if (tr.kind === "extra") continue;
     const trans = detectTransients(tr.samples, tr.sampleRate, tr.id, tr.kind);
@@ -221,12 +233,7 @@ function mergeNearby(events: Annotation[]): Annotation[] {
   const out: Annotation[] = [];
   for (const e of events) {
     const prev = out[out.length - 1];
-    if (
-      prev &&
-      prev.type === e.type &&
-      prev.trackId === e.trackId &&
-      e.start - prev.end < 0.12
-    ) {
+    if (prev && prev.type === e.type && prev.trackId === e.trackId && e.start - prev.end < 0.12) {
       prev.end = Math.max(prev.end, e.end);
       prev.confidence = Math.max(prev.confidence, e.confidence);
     } else out.push({ ...e });
@@ -236,7 +243,10 @@ function mergeNearby(events: Annotation[]): Annotation[] {
 
 export function spikesForTrack(events: Annotation[], trackId: string): Float32Array {
   const times = events
-    .filter((e) => e.trackId === trackId && (e.type === "spike" || e.type === "sharp" || e.type === "qrs"))
+    .filter(
+      (e) =>
+        e.trackId === trackId && (e.type === "spike" || e.type === "sharp" || e.type === "qrs"),
+    )
     .map((e) => e.start);
   return Float32Array.from(times);
 }
