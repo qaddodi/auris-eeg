@@ -411,11 +411,11 @@ describe("editor view", () => {
   it("sensitivity steps and snaps like a gain control", () => {
     assert.equal(stepSensitivity(70, -1), 50);
     assert.equal(stepSensitivity(70, 1), 100);
-    assert.equal(stepSensitivity(15, -1), 15);
+    assert.equal(stepSensitivity(15, -1), 10);
     assert.equal(snapSensitivity(68), 70);
-    assert.equal(clampSensitivity(3), 10);
+    assert.equal(clampSensitivity(3), 3);
     assert.ok(voltagePxPerUv(40, 70) > voltagePxPerUv(40, 150));
-    assert.equal(DEFAULT_SENSITIVITY_UV, 70);
+    assert.equal(DEFAULT_SENSITIVITY_UV, 7);
   });
 
   it("fit sensitivity grows when the tracing is small", () => {
@@ -603,4 +603,3 @@ describe("spectrum", () => {
     assert.ok(p.peakHz > 7 && p.peakHz < 14, `peakHz ${p.peakHz}`);
   });
 });
-

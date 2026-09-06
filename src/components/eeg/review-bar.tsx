@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { HFF_PRESETS, LFF_PRESETS, PAGE_PRESETS, MAX_SENSITIVITY_UV, MIN_SENSITIVITY_UV } from "@/lib/eeg/defaults";
+import { HFF_PRESETS, LFF_PRESETS, PAGE_PRESETS, SENSITIVITY_PRESETS } from "@/lib/eeg/defaults";
 import { BAND_LABELS } from "@/lib/eeg/spectrum";
 import type { ColorMode, MontageKind, SonifyMode } from "@/lib/eeg/types";
 import { cn } from "@/lib/utils";
@@ -84,59 +84,21 @@ export function ReviewBar() {
           onClick={() => setFilters({ notch60: !filters.notch60 })}
           className={cn(chip, filters.notch60 ? "bg-accent text-accent-fg" : "bg-bg text-muted")}
         >
-          60
+          {filters.notch60 ? "60 Hz" : "Off"}
         </button>
       </Group>
-      <Group label="µV">
-        <button
-          type="button"
-          title="More sensitive — bigger waves (,)"
-          onClick={() => nudgeSensitivity(-1)}
-          className={cn(chip, "bg-bg text-muted")}
+      <Group label="Sensitivity">
+        <select
+          value={sensitivity}
+          onChange={(e) => setSensitivity(Number(e.target.value))}
+          className="h-7 rounded-sm border border-border bg-bg px-1.5 text-[0.6875rem] tabular-nums text-muted"
+          aria-label="Display sensitivity in microvolts per millimeter"
         >
-          −
-        </button>
-        <input
-          type="range"
-          min={Math.log10(MIN_SENSITIVITY_UV)}
-          max={Math.log10(MAX_SENSITIVITY_UV)}
-          step={0.01}
-          value={Math.log10(sensitivity)}
-          onChange={(e) => setSensitivity(10 ** Number(e.target.value))}
-          className="h-7 w-24 accent-accent"
-          aria-label="Display sensitivity in microvolts"
-        />
-        <button
-          type="button"
-          title="Less sensitive — smaller waves (.)"
-          onClick={() => nudgeSensitivity(1)}
-          className={cn(chip, "bg-bg text-muted")}
-        >
-          +
-        </button>
-        <span className="w-8 font-mono text-[0.625rem] tabular-nums text-muted">{sensitivity}</span>
-        {([30, 50, 70, 100, 150, 300] as const).map((v) => (
-          <button
-            key={v}
-            type="button"
-            onClick={() => setSensitivity(v)}
-            className={cn(
-              chip,
-              "hidden md:inline-flex",
-              sensitivity === v ? "bg-accent text-accent-fg" : "bg-bg text-muted",
-            )}
-          >
-            {v}
-          </button>
-        ))}
-        <button
-          type="button"
-          title="Fit traces to the current page"
-          onClick={() => fitSensitivity()}
-          className={cn(chip, "bg-bg text-muted")}
-        >
-          Fit
-        </button>
+          {SENSITIVITY_PRESETS.map((v) => <option key={v} value={v}>{v} μV/mm</option>)}
+        </select>
+        <button type="button" title="Fit traces to the current page" onClick={() => fitSensitivity()} className={cn(chip, "bg-bg text-muted")}>Fit</button>
+        <button type="button" title="More sensitive — bigger waves" onClick={() => nudgeSensitivity(-1)} className={cn(chip, "bg-bg text-muted")}>−</button>
+        <button type="button" title="Less sensitive — smaller waves" onClick={() => nudgeSensitivity(1)} className={cn(chip, "bg-bg text-muted")}>+</button>
       </Group>
       <Group label="Page">
         {PAGE_PRESETS.map((v) => (
@@ -155,6 +117,9 @@ export function ReviewBar() {
         <button type="button" className={cn(chip, "bg-bg text-muted")} onClick={() => page(1)}>
           Pg↓
         </button>
+      </Group>
+      <Group label="Timebase">
+        <span className={cn(chip, "inline-flex items-center bg-bg text-muted")}>30 mm/sec</span>
       </Group>
       <Group label="Listen">
         {(

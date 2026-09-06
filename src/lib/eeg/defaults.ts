@@ -4,9 +4,9 @@ export const DEFAULT_FILTERS: FilterSettings = {
   bandpass: false,
   bandpassLow: 0.5,
   bandpassHigh: 70,
-  lff: 0,
-  hff: 0,
-  notch60: false,
+  lff: 1,
+  hff: 70,
+  notch60: true,
   removeDc: true,
 };
 
@@ -33,10 +33,10 @@ export const TIME_SCALE_PRESETS = [1, 2, 4] as const;
 export const VIEW_PRESETS = [2, 5, 10, 15, 30, 60] as const;
 export const PAGE_PRESETS = [10, 15, 30] as const;
 export const DURATION_PRESETS = VIEW_PRESETS;
-export const SENSITIVITY_PRESETS = [15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 1000, 2000] as const;
-export const MIN_SENSITIVITY_UV = 10;
+export const SENSITIVITY_PRESETS = [1, 2, 3, 5, 7, 9, 10, 15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 1000, 2000] as const;
+export const MIN_SENSITIVITY_UV = 1;
 export const MAX_SENSITIVITY_UV = 2000;
-export const DEFAULT_SENSITIVITY_UV = 70;
+export const DEFAULT_SENSITIVITY_UV = 7;
 /** Fraction of a channel lane filled by `sensitivityUv` peak-to-peak. */
 export const LANE_FILL = 0.92;
 
