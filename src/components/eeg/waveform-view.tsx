@@ -7,14 +7,22 @@ import type { Annotation, ProcessedTrack, TrackState } from "@/lib/eeg/types";
 import { playback } from "@/lib/eeg/audio";
 import {
   clamp,
-  envelopeWindow,
   followViewStart,
-  interpWindow,
-  samplesPerPixel,
   timeAtFraction,
 } from "@/lib/eeg/view";
 import { MORPH_COLOR } from "@/lib/eeg/defaults";
-import { displayScaleForChannel, ekgDisplayProfile, normalizeEkgWindow } from "@/lib/eeg/display";
+import { displayScaleForChannel } from "@/lib/eeg/display";
+import { hitTestAnnotations, layoutAnnotations } from "@/lib/eeg/annotation-layout";
+import {
+  cachedEkgDisplayProfile,
+  envelopeWhiskers,
+  envelopeTraceWindow,
+  mapTraceWindow,
+  representativeEnvelopePoints,
+  traceWindow,
+  waveformInvalidationKey,
+  type TraceWindow,
+} from "@/lib/eeg/rendering";
 import { stableTraceColor } from "@/lib/eeg/colors";
 import { dsaRgb, dsaUnit, type DsaFrame } from "@/lib/eeg/spectrum";
 import { eegNow, useEegStore } from "@/store/eeg-store";
@@ -28,16 +36,8 @@ const DSA_RIGHT = 82;
 const DSA_TOP = 14;
 const DSA_BOTTOM = 17;
 const EVENT_LANE = 18;
-/** Below this samples/pixel, min–max bars collapse — draw an interpolated polyline instead. */
-const MINMAX_SPP = 1.8;
-
-function traceWeight(samplesPerPixelValue: number, hovered: boolean): number {
-  // Dense envelope columns already carry visual mass. Taper the stroke as
-  // density rises so the full-recording page stays legible without making
-  // close-up traces feel faint.
-  const densityWeight =
-    samplesPerPixelValue <= MINMAX_SPP ? 1 : Math.max(0.42, Math.sqrt(1.15 / samplesPerPixelValue));
-  return densityWeight * (hovered ? 1.08 : 1);
+function traceWeight(hovered: boolean): number {
+  return hovered ? 1.1 : 1;
 }
 
 function sizeCanvas(canvas: HTMLCanvasElement, cssW: number, cssH: number, dpr: number) {
@@ -51,87 +51,89 @@ function sizeCanvas(canvas: HTMLCanvasElement, cssW: number, cssH: number, dpr: 
   }
 }
 
-function drawPolyline(
+function clearWaveformCanvas(ctx: CanvasRenderingContext2D, cssW: number, cssH: number, dpr: number) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+  ctx.fillStyle = "#07080a";
+  ctx.fillRect(0, 0, cssW, cssH);
+}
+
+function drawNativeTrace(
   ctx: CanvasRenderingContext2D,
-  y: Float32Array,
+  window: Extract<TraceWindow, { mode: "native" }>,
+  sampleRate: number,
   x0: number,
+  span: number,
+  viewStart: number,
+  plotW: number,
   mid: number,
   scale: number,
   sign: number,
   offset = 0,
 ) {
   ctx.beginPath();
-  for (let p = 0; p < y.length; p++) {
-    const x = x0 + p + 0.5;
-    const yy = mid + sign * (y[p]! - offset) * scale;
-    if (p === 0) ctx.moveTo(x, yy);
-    else ctx.lineTo(x, yy);
+  for (let p = 0; p < window.values.length; p++) {
+    const sampleTime = window.indices[p]! / sampleRate;
+    const xx = x0 + ((sampleTime - viewStart) / span) * plotW;
+    const yy = mid + sign * (window.values[p]! - offset) * scale;
+    if (p === 0) ctx.moveTo(xx, yy);
+    else ctx.lineTo(xx, yy);
   }
   ctx.stroke();
 }
 
 function drawLane(
   ctx: CanvasRenderingContext2D,
-  min: Float32Array,
-  max: Float32Array,
+  trace: TraceWindow,
   x0: number,
+  viewStart: number,
+  span: number,
+  plotW: number,
   mid: number,
   scale: number,
   sign: number,
   color: string,
   alpha: number,
-  midV: Float32Array | null,
   offset = 0,
   weight = 1,
+  sampleRate = 1,
 ) {
   ctx.globalAlpha = alpha;
   ctx.strokeStyle = color;
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
-  if (midV) {
-    ctx.lineWidth = 1.35 * weight;
-    drawPolyline(ctx, midV, x0, mid, scale, sign, offset);
+  // Clinical traces benefit from a restrained, crisp stroke. Rounded caps on
+  // every extrema bar made dense views look like filled ink.
+  ctx.lineJoin = "miter";
+  ctx.lineCap = "butt";
+  ctx.lineWidth = Math.max(0.8, 0.95 * weight);
+  if (trace.mode === "native") {
+    drawNativeTrace(ctx, trace, sampleRate, x0, span, viewStart, plotW, mid, scale, sign, offset);
     ctx.globalAlpha = 1;
     return;
   }
-  ctx.globalAlpha = alpha * 0.38;
-  ctx.fillStyle = color;
+  // Keep a normal-weight continuous first/last morphology trace. Extrema are
+  // rendered as restrained source-positioned whiskers below so dense periodic
+  // signals do not become an opaque saturated block.
   ctx.beginPath();
-  for (let p = 0; p < min.length; p++) {
-    const x = x0 + p + 0.5;
-    const yHi = mid + sign * (max[p]! - offset) * scale;
-    if (p === 0) ctx.moveTo(x, yHi);
-    else ctx.lineTo(x, yHi);
+  for (let p = 0; p < trace.min.length; p++) {
+    const points = representativeEnvelopePoints(trace, p, plotW);
+    for (const point of points) {
+      const y = mid + sign * (point.value - offset) * scale;
+      if (p === 0 && point === points[0]) ctx.moveTo(x0 + point.x, y);
+      else ctx.lineTo(x0 + point.x, y);
+    }
   }
-  for (let p = min.length - 1; p >= 0; p--) {
-    ctx.lineTo(x0 + p + 0.5, mid + sign * (min[p]! - offset) * scale);
-  }
-  ctx.closePath();
-  ctx.fill();
+  ctx.stroke();
 
-  ctx.globalAlpha = alpha;
-  ctx.lineWidth = 1.15 * weight;
+  // A low-alpha whisker at each source-positioned extremum preserves brief
+  // transients without drawing a fully connected min/max envelope.
+  ctx.globalAlpha = alpha * 0.28;
+  ctx.lineWidth = Math.max(0.7, 0.8 * weight);
   ctx.beginPath();
-  for (let p = 0; p < min.length; p++) {
-    const x = x0 + p + 0.5;
-    ctx.moveTo(x, mid + sign * (min[p]! - offset) * scale);
-    ctx.lineTo(x, mid + sign * (max[p]! - offset) * scale);
-  }
-  ctx.stroke();
-  ctx.beginPath();
-  for (let p = 0; p < min.length; p++) {
-    const x = x0 + p + 0.5;
-    const y = mid + sign * (max[p]! - offset) * scale;
-    if (p === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  ctx.beginPath();
-  for (let p = 0; p < min.length; p++) {
-    const x = x0 + p + 0.5;
-    const y = mid + sign * (min[p]! - offset) * scale;
-    if (p === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  for (let p = 0; p < trace.min.length; p++) {
+    for (const whisker of envelopeWhiskers(trace, p, plotW)) {
+      ctx.moveTo(x0 + whisker.x, mid + sign * (whisker.from - offset) * scale);
+      ctx.lineTo(x0 + whisker.x, mid + sign * (whisker.to - offset) * scale);
+    }
   }
   ctx.stroke();
   ctx.globalAlpha = 1;
@@ -187,10 +189,11 @@ export function WaveformView() {
     start0: number;
     dur0: number;
   }>(null);
-  const caliperRef = useRef<{ a: number; b: number } | null>(null);
+  const caliperRef = useRef<{ a: number; b: number; trackId: string | null } | null>(null);
   const paintRef = useRef<() => void>(() => {});
 
   const segment = useEegStore((s) => s.segment);
+  const displaySegment = useEegStore((s) => s.displaySegment);
   const status = useEegStore((s) => s.status);
   const busy = useEegStore((s) => s.busy);
   const seekEeg = useEegStore((s) => s.seekEeg);
@@ -227,16 +230,38 @@ export function WaveformView() {
     let waveSig = "";
     let ovSig = "";
     let dsaSig = "";
+    let segmentRef: object | null = null;
 
     const paint = () => {
       const s = useEegStore.getState();
-      const list = (s.segment?.tracks ?? []).filter((t) => t.kind !== "extra");
+      let editorSegment = s.displaySegment;
+      const overviewList = (s.segment?.tracks ?? []).filter((t) => t.kind !== "extra");
       const total = s.segment?.duration ?? 0;
       const t = eegNow(s);
       const follow = s.followPlayhead && playback.playing;
       const viewDur = s.viewDuration;
       const viewStart = follow && total > 0 ? followViewStart(t, viewDur, total) : s.viewStart;
       const viewEnd = viewStart + viewDur;
+      const displayEnd = (editorSegment?.start ?? 0) + (editorSegment?.duration ?? 0);
+      if (
+        s.rawSegment &&
+        (!editorSegment || viewStart < editorSegment.start || viewEnd > displayEnd)
+      ) {
+        s.ensureDisplayWindow(viewStart, viewDur);
+        // The store refresh is synchronous, but the local state snapshot is
+        // not. Re-read it before painting so a newly selected 60s page never
+        // renders the previous 20s buffer into the uncovered tail.
+        editorSegment = useEegStore.getState().displaySegment;
+      }
+      const editorReady = Boolean(
+        editorSegment &&
+          viewStart >= editorSegment.start - 1e-6 &&
+          viewEnd <= editorSegment.start + editorSegment.duration + 1e-6,
+      );
+      const editorList = editorReady
+        ? (editorSegment?.tracks ?? []).filter((t) => t.kind !== "extra")
+        : [];
+      const displayStart = editorSegment?.start ?? 0;
 
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const cssW = wrap.clientWidth;
@@ -252,23 +277,43 @@ export function WaveformView() {
         const ectx = editor.getContext("2d");
         const octx = overlay.getContext("2d");
         if (ectx && octx) {
-          const sig = [
-            list.length,
-            total,
-            viewStart.toFixed(3),
-            viewDur.toFixed(3),
-            s.sensitivityUv,
-            s.negativeUp ? 1 : 0,
-            hoveredTrackRef.current,
-            cssW,
-            cssH,
-            Object.values(s.tracks)
+          // A new processed segment means new waveform data even when its
+          // duration/channel count are unchanged (for example a montage or
+          // LFF/HFF/notch change). Object identity is the local data revision;
+          // the DPR is included because resizing a canvas clears its bitmap.
+          if (editorSegment !== segmentRef) {
+            segmentRef = editorSegment;
+            waveSig = "";
+            ovSig = "";
+            dsaSig = "";
+          }
+          const sig = waveformInvalidationKey({
+            dataRevision: s.segment,
+            trackIds: editorList.map((track) => `${track.id}:${track.sampleRate}`),
+            viewStart: Number(viewStart.toFixed(4)),
+            viewDuration: Number(viewDur.toFixed(4)),
+            sensitivityUv: s.sensitivityUv,
+            negativeUp: s.negativeUp,
+            width: cssW,
+            height: cssH,
+            dpr,
+            trackStateKey: Object.values(s.tracks)
               .map((tr) => `${tr.id}:${tr.mute ? 1 : 0}${tr.solo ? 1 : 0}`)
               .join(","),
-          ].join("|");
-          if (sig !== waveSig) {
+          });
+          if (sig !== waveSig && editorReady) {
             waveSig = sig;
-            drawEditor(ectx, cssW, cssH, list, s, viewStart, viewEnd, hoveredTrackRef.current);
+            drawEditor(
+              ectx,
+              cssW,
+              cssH,
+              editorList,
+              s,
+              viewStart,
+              viewEnd,
+              displayStart,
+              hoveredTrackRef.current,
+            );
           }
           drawEditorOverlay(
             octx,
@@ -283,7 +328,15 @@ export function WaveformView() {
             s.selectedAnnotation,
             caliperRef.current,
             s.showAnnotations,
+            editorList,
+            displayStart,
+            s.focusedTrackIds,
+            s.hoverCursor,
           );
+          if (!editorReady && waveSig !== "waiting-for-display-window") {
+            clearWaveformCanvas(ectx, cssW, cssH, dpr);
+            waveSig = "waiting-for-display-window";
+          }
         }
       }
 
@@ -293,12 +346,21 @@ export function WaveformView() {
         const ctx = overview.getContext("2d");
         const octx = ovOverlay.getContext("2d");
         if (ctx && octx) {
-          const osig = [list.length, total, ovW, ovH, s.negativeUp ? 1 : 0, s.sensitivityUv].join(
-            "|",
-          );
+          const osig = waveformInvalidationKey({
+            dataRevision: s.segment,
+            trackIds: overviewList.map((track) => `${track.id}:${track.sampleRate}`),
+            viewStart: 0,
+            viewDuration: total,
+            sensitivityUv: s.sensitivityUv,
+            negativeUp: s.negativeUp,
+            width: ovW,
+            height: ovH,
+            dpr,
+            trackStateKey: "overview",
+          });
           if (osig !== ovSig) {
             ovSig = osig;
-            drawOverviewWaves(ctx, ovW, ovH, list, s, total);
+            drawOverviewWaves(ctx, ovW, ovH, overviewList, s, total);
           }
           drawOverviewOverlay(
             octx,
@@ -332,6 +394,9 @@ export function WaveformView() {
     };
 
     const loop = () => {
+      // Keep the store's review cursor and bounded display window synchronized
+      // with the audio clock while follow mode is active.
+      useEegStore.getState().syncPlaybackPosition();
       paint();
       if (playback.playing) {
         raf = requestAnimationFrame(loop);
@@ -379,10 +444,40 @@ export function WaveformView() {
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     const s = useEegStore.getState();
     if (s.followPlayhead) s.setFollow(false);
-    const follow = s.followPlayhead && playback.playing;
-    const vs = follow ? followViewStart(eegNow(s), s.viewDuration, segment.duration) : s.viewStart;
+    const latest = useEegStore.getState();
+    const vs = latest.viewStart;
     const frac = clamp(x / Math.max(1, plotW), 0, 1);
     const t = timeAtFraction(frac, vs, s.viewDuration);
+    const laneIds = (latest.displaySegment?.tracks ?? latest.segment?.tracks ?? [])
+      .filter((track) => track.kind !== "extra")
+      .map((track) => track.id);
+    const laneH = Math.max(1, (rect.height - RULER) / Math.max(1, laneIds.length));
+    const y = e.clientY - rect.top;
+    const annotationCandidates = latest.showAnnotations
+      ? latest.annotations.filter(
+          (annotation) =>
+            annotation.source !== "auto" || (latest.showAuto && annotation.type !== "qrs"),
+        )
+      : [];
+    const annotationId = hitTestAnnotations(
+      annotationCandidates,
+      e.clientX - rect.left,
+      y,
+      {
+        viewStart: vs,
+        viewDuration: latest.viewDuration,
+        plotX: GUTTER,
+        plotWidth: plotW,
+        plotTop: RULER,
+        laneHeight: laneH,
+        laneIds,
+        eventRailHeight: EVENT_LANE,
+      },
+    );
+    if (annotationId && latest.tool === "pointer") {
+      latest.selectAnnotation(annotationId);
+      return;
+    }
     if (s.tool === "annotate") {
       s.addAnnotation({
         start: t,
@@ -396,12 +491,13 @@ export function WaveformView() {
       return;
     }
     if (s.tool === "caliper") {
+      const lane = y >= RULER ? Math.floor((y - RULER) / laneH) : -1;
       dragRef.current = { kind: "caliper", x0: e.clientX, start0: t, dur0: 0 };
-      caliperRef.current = { a: t, b: t };
+      caliperRef.current = { a: t, b: t, trackId: laneIds[lane] ?? null };
       paintRef.current();
       return;
     }
-    seekEeg(t);
+    seekEeg(t, "user");
     dragRef.current = { kind: "scrub", x0: e.clientX, start0: vs, dur0: s.viewDuration };
     if (s.audibleScrub) playback.scrubAt(t, 0);
   };
@@ -461,13 +557,25 @@ export function WaveformView() {
     if (!segment) return;
     if (!drag) {
       const rect = wrapRef.current?.getBoundingClientRect();
-      const list = (segment.tracks ?? []).filter((t) => t.kind !== "extra");
+      const state = useEegStore.getState();
+      const list = (state.displaySegment?.tracks ?? state.segment?.tracks ?? []).filter(
+        (track) => track.kind !== "extra",
+      );
       if (rect && e.clientX - rect.left >= GUTTER && list.length > 0) {
+        const plotW = Math.max(1, rect.width - GUTTER);
         const laneH = Math.max(1, (rect.height - RULER) / list.length);
         const lane = Math.floor((e.clientY - rect.top - RULER) / laneH);
         const next = list[lane]?.id ?? null;
-        if (next !== hoveredTrackRef.current) {
+        const frac = clamp((e.clientX - rect.left - GUTTER) / plotW, 0, 1);
+        const timeSec = timeAtFraction(frac, state.viewStart, state.viewDuration);
+        const hover = { timeSec, trackId: next };
+        if (
+          next !== hoveredTrackRef.current ||
+          !state.hoverCursor ||
+          Math.abs(state.hoverCursor.timeSec - timeSec) > 1e-4
+        ) {
           hoveredTrackRef.current = next;
+          state.setHoverCursor(hover);
           paintRef.current();
         }
       }
@@ -483,7 +591,11 @@ export function WaveformView() {
       const vs = follow
         ? followViewStart(eegNow(s), s.viewDuration, segment.duration)
         : s.viewStart;
-      caliperRef.current = { a: drag.start0, b: timeAtFraction(frac, vs, s.viewDuration) };
+      caliperRef.current = {
+        a: drag.start0,
+        b: timeAtFraction(frac, vs, s.viewDuration),
+        trackId: caliperRef.current?.trackId ?? null,
+      };
       paintRef.current();
       return;
     }
@@ -550,8 +662,9 @@ export function WaveformView() {
   };
 
   const onPointerLeave = () => {
-    if (hoveredTrackRef.current !== null) {
+    if (hoveredTrackRef.current !== null || useEegStore.getState().hoverCursor) {
       hoveredTrackRef.current = null;
+      useEegStore.getState().setHoverCursor(null);
       paintRef.current();
     }
   };
@@ -585,7 +698,7 @@ export function WaveformView() {
     return () => wrap.removeEventListener("wheel", onWheel);
   }, [panView, zoomAt]);
 
-  const list = (segment?.tracks ?? []).filter((t) => t.kind !== "extra");
+  const list = (displaySegment?.tracks ?? segment?.tracks ?? []).filter((t) => t.kind !== "extra");
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -680,6 +793,7 @@ function drawEditor(
   s: ReturnType<typeof useEegStore.getState>,
   viewStart: number,
   viewEnd: number,
+  sampleStart: number,
   hoveredTrackId: string | null,
 ) {
   ctx.setTransform(
@@ -690,6 +804,7 @@ function drawEditor(
     0,
     0,
   );
+  ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, cssW, cssH);
   ctx.fillStyle = "#07080a";
   ctx.fillRect(0, 0, cssW, cssH);
@@ -702,6 +817,8 @@ function drawEditor(
   const laneH = plotH / n;
   const sign = s.negativeUp ? -1 : 1;
   const span = Math.max(1e-6, viewEnd - viewStart);
+  const localViewStart = viewStart - sampleStart;
+  const localViewEnd = viewEnd - sampleStart;
 
   ctx.fillStyle = "#101216";
   ctx.fillRect(0, 0, cssW, RULER);
@@ -733,7 +850,10 @@ function drawEditor(
 
   const audible = audibleIds(Object.values(s.tracks));
   const anySolo = Object.values(s.tracks).some((tr) => tr.solo);
-  const nPix = Math.max(1, Math.floor(plotW));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  // Extract at backing-store resolution so Retina displays get the detail
+  // they paid for. Geometry is converted back to CSS coordinates by drawLane.
+  const nPix = Math.max(1, Math.ceil(plotW * dpr));
 
   list.forEach((tr, i) => {
     const y0 = plotTop + i * laneH;
@@ -754,30 +874,41 @@ function drawEditor(
     const lat = st?.lateralityOverride ?? tr.laterality;
     const color = stableTraceColor(tr.id, tr.kind, lat);
     const hovered = hoveredTrackId === tr.id;
-    const alpha = hovered ? 1 : live ? 1 : anySolo || st?.mute ? 0.2 : 0.56;
-    const raw = envelopeWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix);
-    const spp = samplesPerPixel(tr.sampleRate, viewStart, viewEnd, nPix);
-    const rawMid =
-      spp < MINMAX_SPP ? interpWindow(tr.samples, tr.sampleRate, viewStart, viewEnd, nPix) : null;
-    const profile = tr.kind === "ekg" ? ekgDisplayProfile(tr.samples) : null;
+    const focused = s.focusedTrackIds.length === 0 || s.focusedTrackIds.includes(tr.id);
+    const alpha = focused
+      ? hovered
+        ? 1
+        : live
+          ? 1
+          : anySolo || st?.mute
+            ? 0.2
+            : 0.56
+      : 0.18;
+    const raw = traceWindow(tr.samples, tr.sampleRate, localViewStart, localViewEnd, nPix);
+    const profile = tr.kind === "ekg" ? cachedEkgDisplayProfile(tr.samples) : null;
     const display = profile
-      ? normalizeEkgWindow(raw.min, raw.max, rawMid, profile)
-      : { min: raw.min, max: raw.max, mid: rawMid };
+      ? mapTraceWindow(raw, (value) => {
+          const centered = Number.isFinite(value) ? value - profile.baselineUv : 0;
+          return Math.max(-profile.clipUv, Math.min(profile.clipUv, centered));
+        })
+      : raw;
     const scale = displayScaleForChannel(laneH, s.sensitivityUv, tr.kind, profile);
-    const weight = traceWeight(spp, hovered);
+    const weight = traceWeight(hovered);
     drawLane(
       ctx,
-      display.min,
-      display.max,
+      display,
       plotX,
+      localViewStart,
+      span,
+      plotW,
       mid,
       scale,
       sign,
       color,
       alpha,
-      display.mid,
       0,
       weight,
+      tr.sampleRate,
     );
   });
 
@@ -813,8 +944,12 @@ function drawEditorOverlay(
   annotations: Annotation[] = [],
   showAuto = true,
   selected: string | null = null,
-  caliper: { a: number; b: number } | null = null,
+  caliper: { a: number; b: number; trackId: string | null } | null = null,
   showAnnotations = true,
+  tracks: ProcessedTrack[] = [],
+  sampleStart = 0,
+  focusedTrackIds: string[] = [],
+  hoverCursor: { timeSec: number; trackId: string | null } | null = null,
 ) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -823,19 +958,71 @@ function drawEditorOverlay(
   const plotW = Math.max(10, cssW - GUTTER);
   const viewEnd = viewStart + viewDur;
   if (showAnnotations) {
-    for (const a of annotations) {
-      if (a.source === "auto" && (a.type === "qrs" || !showAuto)) continue;
-      if (a.end < viewStart || a.start > viewEnd) continue;
-      const x0 = plotX + clamp((a.start - viewStart) / Math.max(1e-6, viewDur), 0, 1) * plotW;
-      const x1 =
-        plotX +
-        clamp((Math.max(a.end, a.start + 0.02) - viewStart) / Math.max(1e-6, viewDur), 0, 1) *
-          plotW;
-      ctx.fillStyle = MORPH_COLOR[a.type] ?? "#c8ccd4";
-      ctx.globalAlpha = a.id === selected ? 0.55 : 0.28;
-      ctx.fillRect(x0, 0, Math.max(2, x1 - x0), EVENT_LANE);
-      ctx.globalAlpha = 1;
-      ctx.fillRect(x0, EVENT_LANE, 2, cssH - EVENT_LANE);
+    const visible = annotations.filter(
+      (annotation) => annotation.source !== "auto" || (showAuto && annotation.type !== "qrs"),
+    );
+    const laneIds = tracks.filter((track) => track.kind !== "extra").map((track) => track.id);
+    const laneHeight = Math.max(1, (cssH - RULER) / Math.max(1, laneIds.length));
+    const layouts = layoutAnnotations(
+      visible,
+      {
+        viewStart,
+        viewDuration: viewDur,
+        plotX,
+        plotWidth: plotW,
+        plotTop: RULER,
+        laneHeight,
+        laneIds,
+        eventRailHeight: EVENT_LANE,
+      },
+      selected,
+    );
+    for (const layout of layouts) {
+      const annotation = visible.find((item) => item.id === layout.id);
+      if (!annotation) continue;
+      const color = MORPH_COLOR[annotation.type] ?? "#c8ccd4";
+      const selectedAlpha = layout.selected ? 0.2 : 0.08;
+      ctx.fillStyle = color;
+      ctx.globalAlpha = selectedAlpha;
+      if (layout.global) {
+        // Global events live in the rail; only a selected global event gets a
+        // narrow guide through the EEG so it remains obvious without masking
+        // the underlying tracing.
+        ctx.fillRect(layout.x0, 0, Math.max(2, layout.x1 - layout.x0), EVENT_LANE);
+        if (layout.selected) {
+          ctx.globalAlpha = 0.7;
+          ctx.fillRect(layout.x0, EVENT_LANE, Math.max(1, layout.x1 - layout.x0), cssH - EVENT_LANE);
+        }
+      } else {
+        for (const lane of layout.lanes) {
+          ctx.fillRect(layout.x0, lane.top, Math.max(2, layout.x1 - layout.x0), lane.bottom - lane.top);
+        }
+      }
+      ctx.globalAlpha = layout.selected ? 0.95 : 0.7;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = layout.selected ? 1.5 : 1;
+      ctx.setLineDash(annotation.source === "auto" ? [4, 3] : annotation.source === "file" ? [2, 2] : []);
+      ctx.beginPath();
+      ctx.moveTo(layout.x0, 0);
+      ctx.lineTo(layout.x0, layout.global ? cssH : EVENT_LANE);
+      if (layout.x1 - layout.x0 > 2) {
+        ctx.moveTo(layout.x1, 0);
+        ctx.lineTo(layout.x1, layout.global ? cssH : EVENT_LANE);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.globalAlpha = 1;
+  }
+  if (focusedTrackIds.length > 0) {
+    const laneIds = tracks.filter((track) => track.kind !== "extra").map((track) => track.id);
+    const laneHeight = Math.max(1, (cssH - RULER) / Math.max(1, laneIds.length));
+    ctx.strokeStyle = "rgba(126,184,201,0.7)";
+    ctx.lineWidth = 1;
+    for (const trackId of focusedTrackIds) {
+      const lane = laneIds.indexOf(trackId);
+      if (lane < 0) continue;
+      ctx.strokeRect(plotX + 1, RULER + lane * laneHeight + 1, plotW - 2, laneHeight - 2);
     }
   }
   if (caliper) {
@@ -855,9 +1042,41 @@ function drawEditorOverlay(
     ctx.font = "500 11px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
     const dt = Math.abs(caliper.b - caliper.a);
     const hz = dt > 1e-4 ? 1 / dt : 0;
+    const track = caliper.trackId ? tracks.find((item) => item.id === caliper.trackId) : null;
+    let amplitude = "";
+    if (track) {
+      const ia = Math.round((caliper.a - sampleStart) * track.sampleRate);
+      const ib = Math.round((caliper.b - sampleStart) * track.sampleRate);
+      const va = track.samples[Math.max(0, Math.min(track.samples.length - 1, ia))];
+      const vb = track.samples[Math.max(0, Math.min(track.samples.length - 1, ib))];
+      if (va != null && vb != null && Number.isFinite(va) && Number.isFinite(vb)) {
+        amplitude = `  ${track.label}  Δ ${(vb - va).toFixed(1)} µV`;
+      }
+    }
     const label =
-      hz > 0.2 && hz < 80 ? `${dt.toFixed(3)} s  ${hz.toFixed(1)} Hz` : `${dt.toFixed(3)} s`;
+      (hz > 0.2 && hz < 80 ? `${dt.toFixed(3)} s  ${hz.toFixed(1)} Hz` : `${dt.toFixed(3)} s`) +
+      amplitude;
     ctx.fillText(label, Math.min(xa, xb) + 6, 14);
+  }
+  if (hoverCursor && hoverCursor.timeSec >= viewStart && hoverCursor.timeSec <= viewEnd) {
+    const hoverX = plotX + ((hoverCursor.timeSec - viewStart) / Math.max(1e-6, viewDur)) * plotW;
+    ctx.strokeStyle = "rgba(126,184,201,0.8)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(hoverX, 0);
+    ctx.lineTo(hoverX, cssH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (hoverCursor.trackId) {
+      const laneIds = tracks.filter((track) => track.kind !== "extra").map((track) => track.id);
+      const lane = laneIds.indexOf(hoverCursor.trackId);
+      if (lane >= 0) {
+        const laneHeight = Math.max(1, (cssH - RULER) / Math.max(1, laneIds.length));
+        ctx.fillStyle = "rgba(126,184,201,0.08)";
+        ctx.fillRect(plotX, RULER + lane * laneHeight, plotW, laneHeight);
+      }
+    }
   }
   if (t < viewStart || t > viewStart + viewDur) return;
   const frac = (t - viewStart) / Math.max(1e-6, viewDur);
@@ -890,24 +1109,34 @@ function drawOverviewWaves(
   ctx.fillStyle = "#101216";
   ctx.fillRect(0, 0, cssW, cssH);
   if (list.length === 0 || total <= 0) return;
-  const nPix = Math.max(1, Math.floor(cssW));
+  const nPix = Math.max(1, Math.ceil(cssW * dpr));
   const n = Math.max(1, list.length);
   const laneH = (cssH - 14) / n;
   const sign = s.negativeUp ? -1 : 1;
   list.forEach((tr, i) => {
     const mid = 4 + i * laneH + laneH / 2;
     const lat = s.tracks[tr.id]?.lateralityOverride ?? tr.laterality;
-    const raw = envelopeWindow(tr.samples, tr.sampleRate, 0, total, nPix);
-    const profile = tr.kind === "ekg" ? ekgDisplayProfile(tr.samples) : null;
-    const display = profile ? normalizeEkgWindow(raw.min, raw.max, null, profile) : raw;
+    const raw = envelopeTraceWindow(tr.samples, tr.sampleRate, 0, total, nPix);
+    const profile = tr.kind === "ekg" ? cachedEkgDisplayProfile(tr.samples) : null;
+    const display = profile
+      ? {
+          min: Float32Array.from(raw.min, (value) =>
+            Math.max(-profile.clipUv, Math.min(profile.clipUv, value - profile.baselineUv)),
+          ),
+          max: Float32Array.from(raw.max, (value) =>
+            Math.max(-profile.clipUv, Math.min(profile.clipUv, value - profile.baselineUv)),
+          ),
+        }
+      : raw;
     const scale = displayScaleForChannel(laneH, s.sensitivityUv, tr.kind, profile);
     ctx.globalAlpha = 0.9;
     ctx.strokeStyle = stableTraceColor(tr.id, tr.kind, lat);
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let p = 0; p < display.min.length; p++) {
-      ctx.moveTo(p + 0.5, mid + sign * display.min[p]! * scale);
-      ctx.lineTo(p + 0.5, mid + sign * display.max[p]! * scale);
+      const x = ((p + 0.5) / display.min.length) * cssW;
+      ctx.moveTo(x, mid + sign * display.min[p]! * scale);
+      ctx.lineTo(x, mid + sign * display.max[p]! * scale);
     }
     ctx.stroke();
     ctx.globalAlpha = 1;
@@ -1112,12 +1341,16 @@ function TrackGutter({
   const toggleSolo = useEegStore((s) => s.toggleSolo);
   const soloExclusive = useEegStore((s) => s.soloExclusive);
   const setGain = useEegStore((s) => s.setGain);
+  const focused = useEegStore((s) => s.focusedTrackIds.length === 0 || s.focusedTrackIds.includes(track.id));
   const lat = st?.lateralityOverride ?? track.laterality;
   const muted = Boolean(st?.mute);
   const solo = Boolean(st?.solo);
   return (
     <div
-      className="pointer-events-auto flex items-center gap-0.5 border-b border-border/50 px-1"
+      className={cn(
+        "pointer-events-auto flex items-center gap-0.5 border-b border-border/50 px-1",
+        focused && "bg-accent/8",
+      )}
       style={{ height: `${100 / count}%` }}
     >
       <span

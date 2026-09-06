@@ -1,16 +1,16 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Eye, EyeOff, Lightbulb, MousePointer2, Ruler } from "lucide-react";
+import { Activity, Eye, EyeOff, Lightbulb, MousePointer2, Ruler } from "lucide-react";
 import { HFF_PRESETS, LFF_PRESETS, PAGE_PRESETS, SENSITIVITY_PRESETS } from "@/lib/eeg/defaults";
 import type { MontageKind } from "@/lib/eeg/types";
 import { cn } from "@/lib/utils";
 import { useEegStore } from "@/store/eeg-store";
 
 const selectClass =
-  "h-8 max-w-32 rounded-sm border border-border bg-bg px-2 text-xs text-fg outline-none focus:border-accent";
+  "h-8 w-[5.75rem] rounded-sm border border-border bg-bg px-2 text-xs text-fg outline-none focus:border-accent";
 const toolClass =
-  "flex h-8 items-center gap-1 rounded-sm px-2 text-[0.6875rem] font-medium transition-colors";
+  "flex h-8 items-center gap-1 rounded-sm px-2 text-[0.6875rem] font-semibold transition-colors";
 
 export function ReviewBar() {
   const montage = useEegStore((s) => s.montage);
@@ -29,6 +29,8 @@ export function ReviewBar() {
   const annotations = useEegStore((s) => s.annotations);
   const showAuto = useEegStore((s) => s.showAuto);
   const setShowAuto = useEegStore((s) => s.setShowAuto);
+  const showDsa = useEegStore((s) => s.showDsa);
+  const setShowDsa = useEegStore((s) => s.setShowDsa);
 
   const confirmed = annotations.filter((a) => a.source !== "auto").length;
   const suggestions = annotations.filter((a) => a.source === "auto" && a.type !== "qrs").length;
@@ -39,7 +41,7 @@ export function ReviewBar() {
   );
 
   return (
-    <div className="flex shrink-0 flex-wrap items-end gap-x-3 gap-y-2 border-b border-border bg-surface px-3 py-2">
+    <div className="review-toolbar flex shrink-0 flex-wrap items-end gap-x-2 gap-y-1.5 border-b border-border bg-surface px-2 py-1.5 sm:gap-x-3 sm:px-3">
       <Field label="Montage">
         <select
           className={selectClass}
@@ -52,7 +54,7 @@ export function ReviewBar() {
           <option value="custom">Custom</option>
         </select>
       </Field>
-      <Field label="Page">
+      <Field label="Timebase">
         <div className="flex items-center gap-1">
           <select
             className={selectClass}
@@ -206,6 +208,21 @@ export function ReviewBar() {
           <span className="hidden lg:inline">Suggestions</span>
           <span className="font-mono text-[0.625rem]">{suggestions}</span>
         </button>
+        <button
+          type="button"
+          onClick={() => setShowDsa(!showDsa)}
+          className={cn(
+            toolClass,
+            showDsa
+              ? "bg-surface-2 text-accent"
+              : "bg-bg text-muted hover:bg-surface-2 hover:text-fg",
+          )}
+          aria-pressed={showDsa}
+          title="Toggle density spectral array (D)"
+        >
+          <Activity aria-hidden="true" />
+          <span className="hidden lg:inline">DSA</span>
+        </button>
       </div>
     </div>
   );
@@ -213,7 +230,7 @@ export function ReviewBar() {
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="grid gap-1 text-[0.625rem] font-medium uppercase tracking-wide text-subtle">
+    <label className="grid gap-1 text-[0.6875rem] font-semibold uppercase tracking-wide text-muted">
       <span>{label}</span>
       {children}
     </label>

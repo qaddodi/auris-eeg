@@ -1,7 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import { Expand, Info, Keyboard, PanelLeft, Upload } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
+} from "react";
+import { Activity, Expand, Info, Keyboard, PanelLeft, Scan, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ControlPanel } from "./control-panel";
 import { Transport } from "./transport";
@@ -14,6 +22,8 @@ import { useEegStore } from "@/store/eeg-store";
 
 export function Workstation() {
   const [panel, setPanel] = useState<boolean | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [focusEeg, setFocusEeg] = useState(false);
   const aboutOpen = useEegStore((s) => s.aboutOpen);
   const setAboutOpen = useEegStore((s) => s.setAboutOpen);
   const keysOpen = useEegStore((s) => s.keysOpen);
@@ -24,9 +34,18 @@ export function Workstation() {
   const setSoundMode = useEegStore((s) => s.setSoundMode);
   const evidencePreparation = useEegStore((s) => s.evidencePreparation);
   const evidenceReason = useEegStore((s) => s.evidenceReason);
+  const showDsa = useEegStore((s) => s.showDsa);
+  const setShowDsa = useEegStore((s) => s.setShowDsa);
   const demoStarted = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  useEditorKeys();
+  const toggleFocusEeg = useCallback(() => setFocusEeg((value) => !value), []);
+  useEditorKeys(toggleFocusEeg);
+
+  useEffect(() => {
+    const onFullscreen = () => setFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFullscreen);
+    return () => document.removeEventListener("fullscreenchange", onFullscreen);
+  }, []);
 
   useEffect(() => {
     if (status !== "idle" || demoStarted.current) return;
@@ -63,96 +82,178 @@ export function Workstation() {
     musical: "Musical mapping active",
   }[soundMode];
 
-  return (
-    <div className="flex h-dvh min-h-0 flex-col bg-bg text-fg">
-      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2">
-        <Button
-          size="icon"
-          variant="ghost"
-          aria-label="Toggle controls"
-          onClick={() => {
-            const desktop = window.matchMedia("(min-width: 768px)").matches;
-            setPanel((v) => {
-              const open = v == null ? desktop : v;
-              return !open;
-            });
-          }}
-        >
-          <PanelLeft />
-        </Button>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
-            <span className="font-display text-base tracking-tight">Auris</span>
-            <span className="hidden text-xs text-muted sm:inline">EEG sonification</span>
-          </div>
-        </div>
-        <div className="order-last flex w-full items-center gap-2 sm:order-none sm:w-auto">
-          <label className="sr-only" htmlFor="sound-mode">
-            Sound mode
-          </label>
-          <select
-            id="sound-mode"
-            value={soundMode}
-            onChange={(event) => setSoundMode(event.currentTarget.value as typeof soundMode)}
-            className="h-8 rounded-sm border border-border bg-bg px-2 text-xs font-medium text-fg outline-none focus:border-accent"
-          >
-            <option value="off">Sound off</option>
-            <option value="evidence">Evidence</option>
-            <option value="hybrid">Hybrid</option>
-            <option value="experimental">Experimental</option>
-            <option value="musical">Musical</option>
-          </select>
-          <p className="min-w-0 truncate text-xs text-muted" aria-live="polite">
-            {soundStatus}
-          </p>
-        </div>
-        <input ref={fileRef} type="file" accept=".edf,.EDF" className="sr-only" onChange={onFile} />
-        <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()}>
-          <Upload /> <span className="hidden sm:inline">Open EDF</span>
-        </Button>
-        <Button
-          size="icon"
-          variant="ghost"
-          aria-label="Toggle fullscreen"
-          onClick={() => {
-            if (!document.fullscreenElement) void document.documentElement.requestFullscreen?.();
-            else void document.exitFullscreen?.();
-          }}
-        >
-          <Expand />
-        </Button>
-        <Button
-          size="icon"
-          variant="ghost"
-          aria-label="Keyboard shortcuts"
-          onClick={() => setKeysOpen(true)}
-        >
-          <Keyboard />
-        </Button>
-        <Button size="icon" variant="ghost" aria-label="About" onClick={() => setAboutOpen(true)}>
-          <Info />
-        </Button>
-      </header>
+  const togglePanel = () => {
+    const desktop = window.matchMedia("(min-width: 768px)").matches;
+    setPanel((value) => {
+      const open = value == null ? desktop : value;
+      return !open;
+    });
+  };
 
-      <Transport />
+  return (
+    <div
+      className={`workstation-shell flex h-dvh min-h-0 flex-col bg-bg text-fg ${focusEeg ? "workstation-focus" : ""}`}
+    >
+      {!focusEeg && (
+        <header className="workstation-header flex min-h-10 shrink-0 items-center gap-2 border-b border-border bg-surface px-2 py-1.5 sm:px-3">
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label={panel === true ? "Close review controls" : "Open review controls"}
+            aria-expanded={panel !== false}
+            title={panel === true ? "Close review controls" : "Open review controls"}
+            onClick={togglePanel}
+          >
+            <PanelLeft />
+          </Button>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              <span className="font-display text-sm font-semibold tracking-tight sm:text-base">
+                Auris
+              </span>
+              <span className="hidden text-[0.6875rem] text-muted md:inline">
+                EEG review workstation
+              </span>
+            </div>
+          </div>
+          <div className="hidden min-w-0 max-w-[min(36vw,24rem)] items-center gap-2 lg:flex">
+            <label className="sr-only" htmlFor="sound-mode">
+              Sound mode
+            </label>
+            <select
+              id="sound-mode"
+              value={soundMode}
+              onChange={(event) => setSoundMode(event.currentTarget.value as typeof soundMode)}
+              className="h-8 rounded-sm border border-border bg-bg px-2 text-xs font-medium text-fg outline-none focus:border-accent"
+            >
+              <option value="off">Sound off</option>
+              <option value="evidence">Evidence</option>
+              <option value="hybrid">Hybrid</option>
+              <option value="experimental">Experimental</option>
+              <option value="musical">Musical</option>
+            </select>
+            <p className="min-w-0 truncate text-[0.6875rem] text-muted" aria-live="polite">
+              {soundStatus}
+            </p>
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".edf,.EDF"
+            className="sr-only"
+            onChange={onFile}
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => fileRef.current?.click()}
+            title="Open EDF recording"
+          >
+            <Upload /> <span className="hidden sm:inline">Open EDF</span>
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label="Focus EEG: hide workstation chrome"
+            title="Focus EEG (Ctrl/⌘+Shift+F)"
+            onClick={toggleFocusEeg}
+            className="hidden sm:inline-flex"
+          >
+            <Scan aria-hidden="true" /> <span>Focus EEG</span>
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            title={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            onClick={() => {
+              if (!document.fullscreenElement) void document.documentElement.requestFullscreen?.();
+              else void document.exitFullscreen?.();
+            }}
+          >
+            <Expand className={fullscreen ? "rotate-180" : undefined} />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label="Keyboard shortcuts"
+            onClick={() => setKeysOpen(true)}
+          >
+            <Keyboard />
+          </Button>
+          <Button size="icon" variant="ghost" aria-label="About" onClick={() => setAboutOpen(true)}>
+            <Info />
+          </Button>
+        </header>
+      )}
+
+      {!focusEeg && <Transport />}
 
       <div className="relative flex min-h-0 flex-1">
         <div
           className={
             panel === true
-              ? "absolute inset-0 z-40 flex min-h-0 w-full flex-col border-r border-border bg-surface md:static md:z-0 md:w-80 md:shrink-0"
+              ? "absolute inset-y-0 left-0 z-40 flex min-h-0 w-[min(23rem,calc(100vw-1rem))] flex-col border-r border-border bg-surface shadow-2xl md:static md:z-0 md:w-[21rem] md:shrink-0 md:shadow-none lg:w-[23rem]"
               : panel === false
                 ? "hidden"
-                : "hidden min-h-0 w-80 shrink-0 flex-col border-r border-border bg-surface md:flex"
+                : "hidden min-h-0 w-[21rem] shrink-0 flex-col border-r border-border bg-surface md:flex lg:w-[23rem]"
           }
+          aria-label="Review controls"
         >
-          <ControlPanel />
+          <ControlPanel onClose={() => setPanel(false)} />
         </div>
+        {panel === true && (
+          <button
+            type="button"
+            aria-label="Close review controls"
+            className="absolute inset-0 z-30 bg-bg/60 md:hidden"
+            onClick={() => setPanel(false)}
+          />
+        )}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <ReviewBar />
+          {!focusEeg && <ReviewBar />}
           <WaveformView />
         </div>
       </div>
+
+      {focusEeg && (
+        <div
+          className="focus-edge-strip fixed right-2 top-2 z-50 flex items-center gap-1 rounded-md border border-border bg-surface/95 p-1 shadow-2xl backdrop-blur"
+          aria-label="Focused EEG controls"
+        >
+          <Button
+            size="iconSm"
+            variant="ghost"
+            aria-label={panel === true ? "Close review controls" : "Open review controls"}
+            aria-expanded={panel === true}
+            title={panel === true ? "Close review controls" : "Open review controls"}
+            onClick={togglePanel}
+          >
+            <PanelLeft aria-hidden="true" />
+          </Button>
+          <Button
+            size="iconSm"
+            variant={showDsa ? "default" : "ghost"}
+            aria-label={showDsa ? "Hide DSA heatmap" : "Show DSA heatmap"}
+            aria-pressed={showDsa}
+            title={showDsa ? "Hide DSA heatmap" : "Show DSA heatmap"}
+            onClick={() => setShowDsa(!showDsa)}
+          >
+            <Activity aria-hidden="true" />
+          </Button>
+          <Button
+            size="iconSm"
+            variant="default"
+            aria-label="Show workstation chrome"
+            title="Show workstation chrome (Ctrl/⌘+Shift+F)"
+            onClick={toggleFocusEeg}
+          >
+            <span aria-hidden="true" className="font-mono text-[0.625rem] font-bold">
+              F
+            </span>
+          </Button>
+        </div>
+      )}
 
       {aboutOpen && (
         <Modal title="About Auris" onClose={() => setAboutOpen(false)}>
@@ -186,7 +287,7 @@ export function Workstation() {
       {keysOpen && (
         <Modal title="Keyboard shortcuts" onClose={() => setKeysOpen(false)}>
           <div className="grid gap-4 sm:grid-cols-2">
-            {["Playback", "View", "Review", "Tracks", "Help"].map((group) => (
+            {["Playback", "View", "Review", "Help"].map((group) => (
               <div key={group}>
                 <p className="mb-2 text-[0.6875rem] font-medium uppercase tracking-wider text-subtle">
                   {group}
@@ -232,13 +333,34 @@ function Modal({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const first = dialogRef.current?.querySelector<HTMLElement>(
+      "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
+    );
+    first?.focus();
+  }, []);
+
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-bg/70 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-bg/70 p-4"
+      onClick={onClose}
+      role="presentation"
+    >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         className="max-h-[min(32rem,90dvh)] w-full max-w-lg overflow-y-auto rounded-xl bg-surface p-6 shadow-border"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="font-display text-xl tracking-tight">{title}</h2>
+        <h2 id={titleId} className="font-display text-xl tracking-tight">
+          {title}
+        </h2>
         <div className="mt-3">{children}</div>
       </div>
     </div>

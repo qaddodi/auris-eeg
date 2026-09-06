@@ -24,6 +24,14 @@ export const ANNOTATION_SOURCES = [
 ] as const satisfies readonly AnnotationSource[];
 
 const MAX_TEXT_LENGTH = 2_000;
+export const ANNOTATION_TIME_STEP = 0.01;
+
+/** Snap editor times to the hundredth-second native input step. */
+export function snapAnnotationTime(value: number, step = ANNOTATION_TIME_STEP): number {
+  if (!Number.isFinite(value)) return 0;
+  const safeStep = Number.isFinite(step) && step > 0 ? step : ANNOTATION_TIME_STEP;
+  return Number((Math.round(value / safeStep) * safeStep).toFixed(12));
+}
 
 export interface AnnotationValidationOptions {
   /** Recording length in seconds. */
@@ -32,6 +40,53 @@ export interface AnnotationValidationOptions {
   trackIds?: readonly string[];
   /** The source assigned to parsed annotations; imports are always file suggestions. */
   source?: AnnotationSource;
+}
+
+/**
+ * Returns the explicit target tracks for an annotation. A null result means
+ * the annotation is global (for example an EDF+ file note) and should be
+ * shown in the event rail rather than assigned to a single lane.
+ */
+export function annotationTrackIds(
+  annotation: Pick<Annotation, "trackId" | "trackIds">,
+): readonly string[] | null {
+  if (annotation.trackIds && annotation.trackIds.length > 0) return annotation.trackIds;
+  return annotation.trackId ? [annotation.trackId] : null;
+}
+
+export function annotationSourceLabel(source: AnnotationSource): string {
+  if (source === "user") return "Review note";
+  if (source === "file") return "Imported file note";
+  return "Suggested · not diagnostic";
+}
+
+export interface AnnotationExportRecord {
+  start: number;
+  end: number;
+  type: MorphologyType;
+  text: string;
+  /** Legacy scalar spelling retained for existing importers. */
+  track: string | null;
+  source: AnnotationSource;
+  confidence: number;
+  /** Present only when the annotation targets more than one track. */
+  tracks?: string[];
+}
+
+/** Stable JSON shape for current exports plus optional multi-track metadata. */
+export function annotationToExport(annotation: Annotation): AnnotationExportRecord {
+  const tracks = annotationTrackIds(annotation);
+  const record: AnnotationExportRecord = {
+    start: annotation.start,
+    end: annotation.end,
+    type: annotation.type,
+    text: annotation.text,
+    track: tracks?.length === 1 ? tracks[0]! : null,
+    source: annotation.source,
+    confidence: annotation.confidence,
+  };
+  if (tracks && tracks.length > 1) record.tracks = [...tracks];
+  return record;
 }
 
 export class AnnotationImportError extends Error {
@@ -87,8 +142,10 @@ export function validateAnnotations(
     const end = raw.end;
     const text = raw.text;
     const type = raw.type;
-    // `track` is the public export spelling; `trackId` is accepted for API users.
-    const trackId = raw.trackId ?? raw.track ?? null;
+    // `track` is the public legacy spelling; `trackId` is accepted for API
+    // users. `tracks`/`trackIds` extend the shape for multichannel events.
+    const scalarTrack = raw.trackId ?? raw.track;
+    const listTrack = raw.trackIds ?? raw.tracks;
     const confidence = raw.confidence ?? 1;
     const id = raw.id;
 
@@ -109,14 +166,40 @@ export function validateAnnotations(
         index,
       );
     }
-    if (trackId !== null && (typeof trackId !== "string" || !trackId.trim())) {
+    if (
+      scalarTrack !== undefined &&
+      scalarTrack !== null &&
+      (typeof scalarTrack !== "string" || !scalarTrack.trim())
+    ) {
       throw new AnnotationImportError("channel must be null or a non-empty string", index);
     }
-    if (knownTracks && trackId !== null && !knownTracks.has(trackId)) {
-      throw new AnnotationImportError(
-        `channel '${trackId}' is not available in this recording`,
-        index,
-      );
+    if (listTrack !== undefined && scalarTrack !== undefined && scalarTrack !== null) {
+      throw new AnnotationImportError("use either track or tracks, not both", index);
+    }
+    let trackIds: string[] | null = null;
+    if (listTrack !== undefined && listTrack !== null) {
+      if (
+        !Array.isArray(listTrack) ||
+        listTrack.length === 0 ||
+        listTrack.some((track) => typeof track !== "string" || !track.trim())
+      ) {
+        throw new AnnotationImportError("tracks must be a non-empty array of channel names", index);
+      }
+      trackIds = listTrack.map((track) => track as string);
+      if (new Set(trackIds).size !== trackIds.length) {
+        throw new AnnotationImportError("tracks must not contain duplicates", index);
+      }
+    } else if (typeof scalarTrack === "string") {
+      trackIds = [scalarTrack];
+    }
+    if (knownTracks && trackIds) {
+      const missing = trackIds.find((track) => !knownTracks.has(track));
+      if (missing) {
+        throw new AnnotationImportError(
+          `channel '${missing}' is not available in this recording`,
+          index,
+        );
+      }
     }
     if (
       typeof confidence !== "number" ||
@@ -133,16 +216,18 @@ export function validateAnnotations(
     const stableId = typeof id === "string" ? id : stableImportId(index, start, end, text);
     if (usedIds.has(stableId)) throw new AnnotationImportError("id must be unique", index);
     usedIds.add(stableId);
-    return {
+    const annotation: Annotation = {
       id: stableId,
       start,
       end,
-      trackId,
+      trackId: trackIds?.length === 1 ? trackIds[0]! : null,
       type,
       text,
       source: options.source ?? (isSource(raw.source) ? raw.source : "file"),
       confidence,
     };
+    if (trackIds && trackIds.length > 1) annotation.trackIds = trackIds;
+    return annotation;
   });
 }
 

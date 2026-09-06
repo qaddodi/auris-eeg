@@ -223,6 +223,10 @@ export class MixerEngine {
   }
 
   setSoundEnabled(enabled: boolean) {
+    if (this.soundEnabled === enabled) {
+      if (this.master) this.master.gain.value = enabled ? 1 : 0;
+      return;
+    }
     // A mode change is a transport boundary. Off cannot start or resume audio.
     this.pause();
     this.endScrub();

@@ -172,19 +172,58 @@ export function listChannels(header: EdfHeader): ChannelInfo[] {
     .map((s) => describeChannel(s.index, s.label, s.unit, s.sampleRate));
 }
 
-function physical(s: EdfSignal, digital: number): number {
-  const spanD = s.digitalMax - s.digitalMin;
-  const calibrated = ((digital - s.digitalMin) / spanD) * (s.physicalMax - s.physicalMin) + s.physicalMin;
-  // The rest of the EEG pipeline and its sensitivity controls use microvolts.
-  const unit = s.unit.trim().toLowerCase().replace("μ", "µ");
+interface SignalCalibration {
+  digitalMin: number;
+  digitalSpan: number;
+  physicalMin: number;
+  physicalSpan: number;
+  unitScale: number;
+}
+
+/**
+ * Per-signal work that is invariant across samples.
+ *
+ * EDF files commonly contain millions of samples per signal. Keep channel
+ * classification, unit normalization, and affine calibration metadata out of
+ * that inner loop. The sample arithmetic intentionally retains the original
+ * affine expression so calibrated values keep the same semantics and edge
+ * behavior as the previous implementation.
+ */
+function calibrationForSignal(s: EdfSignal): SignalCalibration {
   const kind = describeChannel(s.index, s.label, s.unit, s.sampleRate).kind;
-  if (kind === "eeg" || kind === "eog" || kind === "emg" || kind === "ekg") {
-    if (unit === "v") return calibrated * 1e6;
-    if (unit === "mv") return calibrated * 1e3;
-    if (unit === "uv" || unit === "µv") return calibrated;
-    if (unit === "nv") return calibrated * 1e-3;
+  const unit = s.unit.trim().toLowerCase().replace("μ", "µ");
+  const isVoltage = kind === "eeg" || kind === "eog" || kind === "emg" || kind === "ekg";
+  let unitScale = 1;
+  if (isVoltage) {
+    if (unit === "v") unitScale = 1e6;
+    else if (unit === "mv") unitScale = 1e3;
+    else if (unit === "nv") unitScale = 1e-3;
   }
-  return calibrated;
+  return {
+    digitalMin: s.digitalMin,
+    digitalSpan: s.digitalMax - s.digitalMin,
+    physicalMin: s.physicalMin,
+    physicalSpan: s.physicalMax - s.physicalMin,
+    unitScale,
+  };
+}
+
+const calibrationCache = new WeakMap<EdfHeader, SignalCalibration[]>();
+
+function calibrationsForHeader(header: EdfHeader): SignalCalibration[] {
+  const cached = calibrationCache.get(header);
+  if (cached) return cached;
+  const calibrations = header.signals.map(calibrationForSignal);
+  calibrationCache.set(header, calibrations);
+  return calibrations;
+}
+
+function physical(calibration: SignalCalibration, digital: number): number {
+  const calibrated =
+    ((digital - calibration.digitalMin) / calibration.digitalSpan) * calibration.physicalSpan +
+    calibration.physicalMin;
+  // The rest of the EEG pipeline and its sensitivity controls use microvolts.
+  return calibrated * calibration.unitScale;
 }
 
 export function readRecords(
@@ -202,6 +241,7 @@ export function readRecords(
 
   const view = new DataView(buffer);
   const nsig = header.signals.length;
+  const calibrations = calibrationsForHeader(header);
   const out: Float32Array[] = header.signals.map((s) => new Float32Array(s.samplesPerRecord * nRec));
   const offsets: number[] = [];
   let run = 0;
@@ -224,9 +264,10 @@ export function readRecords(
           dest[destOff + i] = view.getInt16(base + i * 2, true);
         }
       } else {
+        const calibration = calibrations[c]!;
         for (let i = 0; i < sig.samplesPerRecord; i++) {
           const d = view.getInt16(base + i * 2, true);
-          dest[destOff + i] = physical(sig, d);
+          dest[destOff + i] = physical(calibration, d);
         }
       }
     }

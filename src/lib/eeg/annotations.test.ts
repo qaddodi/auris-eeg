@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   AnnotationImportError,
+  annotationToExport,
+  annotationTrackIds,
   annotationHistoryRedo,
   annotationHistoryUndo,
   parseAnnotationsJson,
+  snapAnnotationTime,
   validateAnnotations,
 } from "./annotations.ts";
 import type { Annotation } from "./types.ts";
@@ -21,6 +24,12 @@ const one: Annotation = {
 };
 
 describe("annotation imports", () => {
+  it("snaps floating cursor times to the native hundredth-second step", () => {
+    assert.equal(snapAnnotationTime(11.860299999982146), 11.86);
+    assert.equal(snapAnnotationTime(11.865), 11.87);
+    assert.equal(snapAnnotationTime(Number.NaN), 0);
+  });
+
   it("accepts exported track spelling and produces deterministic file suggestions", () => {
     const input = JSON.stringify([
       { start: 2, end: 3, track: "Fp1-F7", type: "spike", text: "brief", source: "user" },
@@ -57,6 +66,55 @@ describe("annotation imports", () => {
       AnnotationImportError,
     );
     assert.throws(() => validateAnnotations([one, one], { duration: 10 }), AnnotationImportError);
+  });
+
+  it("accepts multichannel tracks and exports both modern and legacy spellings", () => {
+    const input = parseAnnotationsJson(
+      JSON.stringify([
+        {
+          start: 2,
+          end: 3,
+          tracks: ["Fp1-F7", "F7-T3"],
+          type: "spike-wave",
+          text: "regional pattern",
+          source: "auto",
+          confidence: 0.63,
+        },
+      ]),
+      { duration: 10, trackIds: ["Fp1-F7", "F7-T3"] },
+    )[0]!;
+    assert.equal(input.trackId, null);
+    assert.deepEqual(input.trackIds, ["Fp1-F7", "F7-T3"]);
+    assert.deepEqual(annotationTrackIds(input), ["Fp1-F7", "F7-T3"]);
+    assert.deepEqual(annotationToExport(input), {
+      start: 2,
+      end: 3,
+      type: "spike-wave",
+      text: "regional pattern",
+      track: null,
+      tracks: ["Fp1-F7", "F7-T3"],
+      source: "auto",
+      confidence: 0.63,
+    });
+  });
+
+  it("rejects ambiguous scalar and multichannel targets", () => {
+    assert.throws(
+      () =>
+        validateAnnotations([{ ...one, track: "Fp1-F7", tracks: ["Fp1-F7", "F7-T3"] }], {
+          duration: 10,
+          trackIds: ["Fp1-F7", "F7-T3"],
+        }),
+      AnnotationImportError,
+    );
+    assert.throws(
+      () =>
+        validateAnnotations([{ ...one, tracks: ["Fp1-F7", "Fp1-F7"] }], {
+          duration: 10,
+          trackIds: ["Fp1-F7"],
+        }),
+      AnnotationImportError,
+    );
   });
 });
 

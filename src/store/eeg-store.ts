@@ -18,6 +18,8 @@ import {
 } from "@/lib/eeg/pipeline";
 import { detectMorphologies } from "@/lib/eeg/patterns";
 import {
+  annotationToExport,
+  annotationTrackIds,
   annotationHistoryRedo,
   annotationHistoryUndo,
   validateAnnotations,
@@ -30,11 +32,22 @@ import {
 } from "@/lib/sonification/loui2014";
 import { buildDsa } from "@/lib/eeg/spectrum";
 import {
+  buildDisplayWindow,
+  displayWindowContains,
+  planDisplayWindow,
+  recordingDcOffsets,
+} from "@/lib/eeg/display-pipeline";
+import {
+  reduceNavigation,
+  type NavigationAction,
+  type PlaybackStatus,
+  type SeekIntent,
+} from "@/lib/eeg/navigation";
+import {
   clampView,
   DEFAULT_VIEW_SEC,
   fitSensitivityUv,
   followViewStart,
-  zoomView,
 } from "@/lib/eeg/view";
 import { panForLaterality } from "@/lib/eeg/stereo";
 import type {
@@ -59,6 +72,7 @@ interface SegmentData {
   start: number;
   duration: number;
   tracks: ProcessedTrack[];
+  dcOffsets?: Readonly<Record<string, number>>;
 }
 
 export interface AppState {
@@ -72,6 +86,12 @@ export interface AppState {
   derivations: Derivation[];
   tracks: Record<string, TrackState>;
   filters: FilterSettings;
+  /** Immutable, whole-record montage branch before display filters. */
+  rawSegment: SegmentData | null;
+  /** Prefetched, display-filtered window used only by the waveform editor. */
+  displaySegment: SegmentData | null;
+  displayRevision: number;
+  displayLatencyMs: number | null;
   analysisSegment: SegmentData | null;
   evidencePreparation: Loui2014Preparation | null;
   evidenceReason: string | null;
@@ -93,14 +113,19 @@ export interface AppState {
   playing: boolean;
   loop: boolean;
   playheadEeg: number;
+  reviewCursorEeg: number;
+  playbackStatus: PlaybackStatus;
   viewStart: number;
   viewDuration: number;
   followPlayhead: boolean;
+  manualNavigationOverride: boolean;
+  hoverCursor: { timeSec: number; trackId: string | null } | null;
   busy: boolean;
   aboutOpen: boolean;
   keysOpen: boolean;
   annotations: Annotation[];
   selectedAnnotation: string | null;
+  focusedTrackIds: string[];
   showAuto: boolean;
   showAnnotations: boolean;
   tool: "pointer" | "annotate" | "caliper";
@@ -131,21 +156,25 @@ export interface AppState {
   setNegativeUp: (v: boolean) => void;
   setAboutOpen: (v: boolean) => void;
   setKeysOpen: (v: boolean) => void;
-  seekEeg: (t: number) => void;
+  seekEeg: (t: number, intent?: SeekIntent) => void;
+  syncPlaybackPosition: () => void;
   togglePlay: () => Promise<void>;
   stop: () => void;
   setLoop: (v: boolean) => void;
   download: () => void;
   zoomAt: (factor: number, anchor?: number) => void;
   setViewDuration: (d: number) => void;
-  setView: (start: number, duration: number, opts?: { follow?: boolean }) => void;
+  setView: (start: number, duration: number, opts?: { follow?: boolean; manual?: boolean }) => void;
   panView: (deltaSec: number) => void;
   setFollow: (v: boolean) => void;
+  setHoverCursor: (hover: AppState["hoverCursor"]) => void;
+  ensureDisplayWindow: (start?: number, duration?: number) => void;
   nudge: (deltaSec: number) => void;
   page: (dir: -1 | 1) => void;
   addAnnotation: (a: Omit<Annotation, "id">) => void;
   removeAnnotation: (id: string) => void;
   selectAnnotation: (id: string | null) => void;
+  nextAnnotation: (direction: -1 | 1) => void;
   setShowAuto: (v: boolean) => void;
   setShowAnnotations: (v: boolean) => void;
   setTool: (t: AppState["tool"]) => void;
@@ -199,6 +228,41 @@ function nid(): string {
   return `ann-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+const RAW_FILTERS: FilterSettings = {
+  bandpass: false,
+  bandpassLow: 0,
+  bandpassHigh: 0,
+  lff: 0,
+  hff: 0,
+  notch60: false,
+  removeDc: false,
+};
+
+const rawMontageCache = new WeakMap<ArrayBuffer, Map<string, SegmentData>>();
+const analysisMontageCache = new WeakMap<ArrayBuffer, Map<string, SegmentData>>();
+
+function montageCacheKey(montage: MontageKind, pairs: [string, string][]): string {
+  return `${montage}:${pairs.map(([a, b]) => `${a}-${b}`).join("|")}`;
+}
+
+function cachedWholeRecording(
+  cache: WeakMap<ArrayBuffer, Map<string, SegmentData>>,
+  recording: LoadedRecording,
+  key: string,
+  build: () => SegmentData,
+): SegmentData {
+  let entries = cache.get(recording.buffer);
+  if (!entries) {
+    entries = new Map();
+    cache.set(recording.buffer, entries);
+  }
+  const hit = entries.get(key);
+  if (hit) return hit;
+  const value = build();
+  entries.set(key, value);
+  return value;
+}
+
 export function eegNow(state?: Pick<AppState, "segment" | "playheadEeg">): number {
   const s = state ?? useEegStore.getState();
   if (!s.segment) return 0;
@@ -207,12 +271,79 @@ export function eegNow(state?: Pick<AppState, "segment" | "playheadEeg">): numbe
 }
 
 export const useEegStore = create<AppState>((set, get) => {
+  const commitNavigation = (action: NavigationAction) => {
+    const s = get();
+    const total = s.segment?.duration ?? s.recording?.header.duration ?? 0;
+    const next = reduceNavigation(
+      {
+        recordingDurationSec: total,
+        positionSec: s.reviewCursorEeg,
+        viewport: { startSec: s.viewStart, durationSec: s.viewDuration },
+        followMode: s.followPlayhead ? "following" : "manual",
+        playbackStatus: s.playbackStatus,
+        hover: s.hoverCursor,
+        selectedAnnotationId: s.selectedAnnotation,
+      },
+      action,
+    );
+    set({
+      reviewCursorEeg: next.positionSec,
+      playheadEeg: next.positionSec,
+      viewStart: next.viewport.startSec,
+      viewDuration: next.viewport.durationSec,
+      followPlayhead: next.followMode === "following",
+      manualNavigationOverride: next.followMode === "manual",
+      playbackStatus: next.playbackStatus,
+      hoverCursor: next.hover,
+      selectedAnnotation: next.selectedAnnotationId,
+    });
+    return next;
+  };
+
+  const refreshDisplayWindow = (
+    requestedStart = get().viewStart,
+    requestedDuration = get().viewDuration,
+    force = false,
+    filterOverride?: FilterSettings,
+  ) => {
+    const { rawSegment, filters } = get();
+    if (!rawSegment) return;
+    const activeFilters = filterOverride ?? filters;
+    if (
+      !force &&
+      displayWindowContains(get().displaySegment, requestedStart, requestedDuration)
+    ) {
+      return;
+    }
+    const plan = planDisplayWindow(
+      requestedStart,
+      requestedDuration,
+      rawSegment.duration,
+      activeFilters,
+    );
+    const started = typeof performance === "undefined" ? 0 : performance.now();
+    const displaySegment = buildDisplayWindow(rawSegment, plan, activeFilters);
+    const elapsed = typeof performance === "undefined" ? 0 : performance.now() - started;
+    set({
+      displaySegment,
+      displayRevision: get().displayRevision + 1,
+      displayLatencyMs: elapsed,
+      error: null,
+    });
+  };
+
   const liveViewCommit = () => {
     const { segment, viewDuration, followPlayhead } = get();
     if (!segment || !followPlayhead) return;
     const t = eegNow(get());
     const start = followViewStart(t, viewDuration, segment.duration);
-    set({ viewStart: start, playheadEeg: t });
+    set({
+      viewStart: start,
+      playheadEeg: t,
+      reviewCursorEeg: t,
+      playbackStatus: playback.playing ? "playing" : "paused",
+    });
+    refreshDisplayWindow(start, viewDuration);
   };
 
   const pushEngine = () => {
@@ -284,20 +415,40 @@ export const useEegStore = create<AppState>((set, get) => {
   };
 
   const rebuildSession = () => {
-    const { recording, derivations, filters, viewStart, viewDuration } = get();
+    const { recording, derivations, filters, viewStart, viewDuration, montage, customPairs } = get();
     if (!recording) return;
     const total = recording.header.duration;
     const position = eegNow(get());
-    playback.pause();
-    // Display and analysis/audio are independently derived from the immutable EDF buffer.
-    // A display filter change can therefore never alter analysis or sonification input.
-    const analysis = processSegment(recording, 0, total, derivations, DEFAULT_FILTERS);
-    const seg = processSegment(recording, 0, total, derivations, filters);
-    const evidence = evidenceForRecording(recording);
+    const wasPlaying = playback.playing;
+    const key = montageCacheKey(montage, customPairs);
+    // Raw, analysis/audio, and display branches are deliberately separate.
+    // Whole-record montage work is cached; routine display filtering is bounded
+    // to a prefetched viewport window below.
+    const raw = cachedWholeRecording(rawMontageCache, recording, key, () =>
+      (() => {
+        const segment = processSegment(recording, 0, total, derivations, RAW_FILTERS);
+        return { ...segment, dcOffsets: recordingDcOffsets(segment) };
+      })(),
+    );
+    const analysis = cachedWholeRecording(analysisMontageCache, recording, key, () =>
+      buildDisplayWindow(
+        raw,
+        { start: 0, duration: total, visibleStart: 0, visibleDuration: total },
+        DEFAULT_FILTERS,
+      ),
+    );
+    const priorEvidence = get().evidencePreparation || get().evidenceReason
+      ? { preparation: get().evidencePreparation, reason: get().evidenceReason }
+      : evidenceForRecording(recording);
     const view = clampView(
       viewStart,
       viewDuration || Math.min(DEFAULT_VIEW_SEC, total),
-      seg.duration,
+      total,
+    );
+    const display = buildDisplayWindow(
+      raw,
+      planDisplayWindow(view.start, view.duration, total, filters),
+      filters,
     );
     // EKG remains available as a trace and manual annotation target, but its
     // heartbeat morphology is intentionally not surfaced as an auto suggestion.
@@ -318,12 +469,17 @@ export const useEegStore = create<AppState>((set, get) => {
       (x) => x.source !== "auto" && !x.id.startsWith("edf-"),
     );
     set({
-      segment: seg,
+      rawSegment: raw,
+      segment: analysis,
+      displaySegment: display,
+      displayRevision: get().displayRevision + 1,
       analysisSegment: analysis,
-      evidencePreparation: evidence.preparation,
-      evidenceReason: evidence.reason,
-      playing: false,
-      playheadEeg: Math.min(get().playheadEeg, seg.duration),
+      evidencePreparation: priorEvidence.preparation,
+      evidenceReason: priorEvidence.reason,
+      playing: wasPlaying,
+      playbackStatus: wasPlaying ? "playing" : get().playbackStatus,
+      playheadEeg: Math.min(position, total),
+      reviewCursorEeg: Math.min(position, total),
       viewStart: view.start,
       viewDuration: view.duration,
       annotations: [...keepUser, ...fromFile, ...auto],
@@ -331,6 +487,8 @@ export const useEegStore = create<AppState>((set, get) => {
     });
     pushEngine();
     playback.seek(position);
+    const nav = commitNavigation({ type: "seek", positionSec: position, intent: "programmatic" });
+    refreshDisplayWindow(nav.viewport.startSec, nav.viewport.durationSec);
   };
 
   return {
@@ -344,6 +502,10 @@ export const useEegStore = create<AppState>((set, get) => {
     derivations: [],
     tracks: {},
     filters: { ...DEFAULT_FILTERS },
+    rawSegment: null,
+    displaySegment: null,
+    displayRevision: 0,
+    displayLatencyMs: null,
     analysisSegment: null,
     evidencePreparation: null,
     evidenceReason: null,
@@ -360,14 +522,19 @@ export const useEegStore = create<AppState>((set, get) => {
     playing: false,
     loop: false,
     playheadEeg: 0,
+    reviewCursorEeg: 0,
+    playbackStatus: "stopped",
     viewStart: 0,
     viewDuration: DEFAULT_VIEW_SEC,
     followPlayhead: true,
+    manualNavigationOverride: false,
+    hoverCursor: null,
     busy: false,
     aboutOpen: false,
     keysOpen: false,
     annotations: [],
     selectedAnnotation: null,
+    focusedTrackIds: [],
     showAuto: false,
     showAnnotations: true,
     tool: "pointer",
@@ -386,7 +553,10 @@ export const useEegStore = create<AppState>((set, get) => {
         annotationPast: [],
         annotationFuture: [],
         selectedAnnotation: null,
+        focusedTrackIds: [],
         recording: null,
+        rawSegment: null,
+        displaySegment: null,
         segment: null,
         analysisSegment: null,
         evidencePreparation: null,
@@ -419,7 +589,11 @@ export const useEegStore = create<AppState>((set, get) => {
           viewStart: 0,
           viewDuration: Math.min(DEFAULT_VIEW_SEC, total),
           playheadEeg: 0,
+          reviewCursorEeg: 0,
+          playbackStatus: "stopped",
           followPlayhead: true,
+          manualNavigationOverride: false,
+          hoverCursor: null,
           status: "ready",
           busy: true,
         });
@@ -444,10 +618,11 @@ export const useEegStore = create<AppState>((set, get) => {
 
     setFilters: (p) => {
       const next = { ...get().filters, ...p };
-      const { recording, derivations } = get();
       try {
-        const segment = recording ? processSegment(recording, 0, recording.header.duration, derivations, next) : null;
-        set({ filters: next, segment, error: null });
+        // Validate and render only the prefetched display window. The immutable
+        // whole-record analysis/audio branch is intentionally untouched.
+        refreshDisplayWindow(get().viewStart, get().viewDuration, true, next);
+        set({ filters: next });
       } catch (err) {
         set({ error: err instanceof Error ? err.message : "Display filter could not be applied." });
       }
@@ -471,7 +646,20 @@ export const useEegStore = create<AppState>((set, get) => {
               : mode === "evidence"
                 ? { ...get().sonify, mode: "loui" as const, timeScale: 1 }
                 : get().sonify;
-      set({ soundMode: mode, sonify, playing: false, playheadEeg: t, audibleScrub: false });
+      // Keep the UI transport state aligned with the audio engine. Switching
+      // between modes that share an enabled engine no longer creates a false
+      // paused state when MixerEngine intentionally keeps playback running.
+      const enginePlaying = playback.playing;
+      set({
+        soundMode: mode,
+        sonify,
+        playing: enginePlaying,
+        playheadEeg: t,
+        reviewCursorEeg: t,
+        playbackStatus: enginePlaying ? "playing" : "paused",
+        audibleScrub: false,
+      });
+      commitNavigation({ type: "seek", positionSec: t, intent: "programmatic" });
       pushEngine();
       playback.seek(t);
     },
@@ -594,10 +782,16 @@ export const useEegStore = create<AppState>((set, get) => {
     setSensitivity: (n) => set({ sensitivityUv: clampSensitivity(n) }),
     nudgeSensitivity: (dir) => set({ sensitivityUv: stepSensitivity(get().sensitivityUv, dir) }),
     fitSensitivity: () => {
-      const { segment, viewStart, viewDuration } = get();
-      if (!segment) return;
+      const { segment, displaySegment, viewStart, viewDuration } = get();
+      const source = displaySegment ?? segment;
+      if (!source) return;
+      const localStart = Math.max(0, viewStart - source.start);
       set({
-        sensitivityUv: fitSensitivityUv(segment.tracks, viewStart, viewStart + viewDuration),
+        sensitivityUv: fitSensitivityUv(
+          source.tracks,
+          localStart,
+          localStart + viewDuration,
+        ),
       });
     },
     setNegativeUp: (v) => {
@@ -610,15 +804,24 @@ export const useEegStore = create<AppState>((set, get) => {
     setAudibleScrub: (v) =>
       set({ audibleScrub: v && ["experimental", "musical"].includes(get().soundMode) }),
 
-    seekEeg: (t) => {
+    seekEeg: (t, intent = "user") => {
       const { segment } = get();
       if (!segment) {
-        set({ playheadEeg: t });
+        set({ playheadEeg: t, reviewCursorEeg: t });
         return;
       }
       const tt = Math.max(0, Math.min(segment.duration, t));
       playback.seek(tt);
-      set({ playheadEeg: tt, playing: playback.playing });
+      const nav = commitNavigation({ type: "seek", positionSec: tt, intent });
+      set({ playing: playback.playing, playbackStatus: playback.playing ? "playing" : nav.playbackStatus });
+      refreshDisplayWindow(nav.viewport.startSec, nav.viewport.durationSec);
+    },
+
+    syncPlaybackPosition: () => {
+      if (!playback.playing) return;
+      const t = eegNow(get());
+      const nav = commitNavigation({ type: "playback-tick", positionSec: t });
+      refreshDisplayWindow(nav.viewport.startSec, nav.viewport.durationSec);
     },
 
     togglePlay: async () => {
@@ -633,33 +836,36 @@ export const useEegStore = create<AppState>((set, get) => {
       if (playback.playing) {
         playback.pause();
         liveViewCommit();
-        set({ playing: false, playheadEeg: eegNow(get()) });
+        const t = eegNow(get());
+        commitNavigation({ type: "pause", positionSec: t });
+        set({ playing: false, playheadEeg: t, reviewCursorEeg: t, playbackStatus: "paused" });
         return;
       }
       playback.onEnded = () => {
         if (!playback.loop) {
-          set({
-            playing: false,
-            playheadEeg: get().segment?.duration ?? 0,
-          });
+          commitNavigation({ type: "playback-end" });
+          set({ playing: false, playbackStatus: "ended" });
+          refreshDisplayWindow();
         }
       };
       try {
         await playback.play();
-        set({ playing: playback.playing, error: null });
+        commitNavigation({ type: "play", positionSec: playback.currentTime() });
+        set({ playing: playback.playing, playbackStatus: "playing", error: null });
       } catch (err) {
-        set({ playing: false, error: err instanceof Error ? err.message : "Audio could not start." });
+        set({ playing: false, playbackStatus: "paused", error: err instanceof Error ? err.message : "Audio could not start." });
       }
     },
 
     stop: () => {
       playback.stop();
-      const { segment, viewDuration, followPlayhead } = get();
-      const total = segment?.duration ?? 0;
-      const view = followPlayhead
-        ? clampView(0, viewDuration, total)
-        : { start: get().viewStart, duration: viewDuration };
-      set({ playing: false, playheadEeg: 0, viewStart: view.start });
+      if (!get().segment) {
+        set({ playing: false, playheadEeg: 0, reviewCursorEeg: 0, playbackStatus: "stopped" });
+        return;
+      }
+      const nav = commitNavigation({ type: "stop" });
+      set({ playing: false, playbackStatus: "stopped" });
+      refreshDisplayWindow(nav.viewport.startSec, nav.viewport.durationSec);
     },
 
     setLoop: (v) => {
@@ -696,63 +902,73 @@ export const useEegStore = create<AppState>((set, get) => {
     },
 
     zoomAt: (factor, anchor) => {
-      const { segment, viewStart, viewDuration, followPlayhead } = get();
+      const { segment } = get();
       if (!segment) return;
       const t = eegNow(get());
-      const a = anchor ?? t;
-      let next = zoomView(viewStart, viewDuration, segment.duration, factor, a);
-      if (followPlayhead) {
-        next = clampView(
-          followViewStart(t, next.duration, segment.duration),
-          next.duration,
-          segment.duration,
-        );
-      }
-      set({ viewStart: next.start, viewDuration: next.duration });
+      commitNavigation({ type: "playback-tick", positionSec: t });
+      const next = commitNavigation({ type: "zoom", factor, anchorSec: anchor ?? t });
+      refreshDisplayWindow(next.viewport.startSec, next.viewport.durationSec);
     },
 
     setViewDuration: (d) => {
-      const { segment, followPlayhead } = get();
+      const { segment } = get();
       if (!segment) return;
       const t = eegNow(get());
-      const next = clampView(
-        followPlayhead ? followViewStart(t, d, segment.duration) : get().viewStart,
-        d,
-        segment.duration,
-      );
-      set({ viewStart: next.start, viewDuration: next.duration });
+      commitNavigation({ type: "playback-tick", positionSec: t });
+      const next = commitNavigation({ type: "set-view-duration", durationSec: d });
+      refreshDisplayWindow(next.viewport.startSec, next.viewport.durationSec);
     },
 
     setView: (start, duration, opts) => {
       const { segment } = get();
       if (!segment) return;
-      const next = clampView(start, duration, segment.duration);
-      set({
-        viewStart: next.start,
-        viewDuration: next.duration,
-        followPlayhead: opts?.follow ?? false,
+      const manual = opts?.manual ?? opts?.follow !== true;
+      const next = commitNavigation({
+        type: "set-view",
+        startSec: start,
+        durationSec: duration,
+        intent: opts?.follow === true ? "programmatic" : manual ? "manual" : "programmatic",
       });
+      if (opts?.follow === true) {
+        const followed = commitNavigation({ type: "set-follow", enabled: true });
+        refreshDisplayWindow(followed.viewport.startSec, followed.viewport.durationSec);
+      } else {
+        refreshDisplayWindow(next.viewport.startSec, next.viewport.durationSec);
+      }
     },
 
     panView: (deltaSec) => {
-      const { segment, viewStart, viewDuration } = get();
+      const { segment } = get();
       if (!segment) return;
-      const next = clampView(viewStart + deltaSec, viewDuration, segment.duration);
-      set({ viewStart: next.start, followPlayhead: false });
+      const next = commitNavigation({ type: "pan", deltaSec });
+      refreshDisplayWindow(next.viewport.startSec, next.viewport.durationSec);
     },
 
     setFollow: (v) => {
-      const { segment, viewDuration } = get();
+      const { segment } = get();
       if (v && segment) {
         const t = eegNow(get());
-        set({
-          followPlayhead: true,
-          viewStart: followViewStart(t, viewDuration, segment.duration),
-        });
+        const next = commitNavigation({ type: "seek", positionSec: t, intent: "programmatic" });
+        set({ followPlayhead: true, manualNavigationOverride: false });
+        refreshDisplayWindow(next.viewport.startSec, next.viewport.durationSec);
       } else {
+        if (!segment) {
+          set({ followPlayhead: false, manualNavigationOverride: true });
+          return;
+        }
         liveViewCommit();
-        set({ followPlayhead: false });
+        const next = commitNavigation({ type: "set-follow", enabled: false });
+        set({ followPlayhead: false, manualNavigationOverride: true });
+        refreshDisplayWindow(next.viewport.startSec, next.viewport.durationSec);
       }
+    },
+
+    setHoverCursor: (hover) => {
+      commitNavigation({ type: "set-hover", hover });
+    },
+
+    ensureDisplayWindow: (start, duration) => {
+      refreshDisplayWindow(start ?? get().viewStart, duration ?? get().viewDuration);
     },
 
     nudge: (deltaSec) => {
@@ -763,37 +979,44 @@ export const useEegStore = create<AppState>((set, get) => {
     },
 
     page: (dir) => {
-      const { segment, viewStart, viewDuration } = get();
+      const { segment } = get();
       if (!segment) return;
-      const next = clampView(viewStart + dir * viewDuration, viewDuration, segment.duration);
-      set({ viewStart: next.start, followPlayhead: false });
-      get().seekEeg(next.start);
+      const next = commitNavigation({ type: "page", direction: dir });
+      get().seekEeg(next.viewport.startSec, "programmatic");
+      refreshDisplayWindow(next.viewport.startSec, next.viewport.durationSec);
     },
 
     addAnnotation: (a) => {
       const item = validateAnnotations([{ ...a, id: nid(), source: "user" }], { duration: get().segment?.duration ?? 0 })[0]!;
       set({ annotationPast: [...get().annotationPast.slice(-49), get().annotations], annotationFuture: [],
-        annotations: [...get().annotations, item], selectedAnnotation: item.id, tool: "pointer" });
+        annotations: [...get().annotations, item], selectedAnnotation: item.id,
+        focusedTrackIds: [...(annotationTrackIds(item) ?? [])], tool: "pointer" });
+      get().selectAnnotation(item.id);
     },
     updateAnnotation: (id, patch) => {
       const old = get().annotations.find((a) => a.id === id);
       if (!old || old.source !== "user") return;
       const item = validateAnnotations([{ ...old, ...patch, id, source: "user" }], { duration: get().segment?.duration ?? 0 })[0]!;
       set({ annotationPast: [...get().annotationPast.slice(-49), get().annotations], annotationFuture: [],
-        annotations: get().annotations.map((a) => a.id === id ? item : a) });
+        annotations: get().annotations.map((a) => a.id === id ? item : a),
+        focusedTrackIds: get().selectedAnnotation === id
+          ? [...(annotationTrackIds(item) ?? [])]
+          : get().focusedTrackIds });
+      if (get().selectedAnnotation === id) get().selectAnnotation(id);
     },
     removeAnnotation: (id) => {
       if (!get().annotations.some((a) => a.id === id && a.source === "user")) return;
       set({ annotationPast: [...get().annotationPast.slice(-49), get().annotations], annotationFuture: [],
-        annotations: get().annotations.filter((a) => a.id !== id), selectedAnnotation: null });
+        annotations: get().annotations.filter((a) => a.id !== id), selectedAnnotation: null,
+        focusedTrackIds: [] });
     },
     undoAnnotations: () => {
       const h = annotationHistoryUndo(get().annotationPast, get().annotations, get().annotationFuture);
-      set({ annotations: h.current, annotationPast: h.past, annotationFuture: h.future, selectedAnnotation: null });
+      set({ annotations: h.current, annotationPast: h.past, annotationFuture: h.future, selectedAnnotation: null, focusedTrackIds: [] });
     },
     redoAnnotations: () => {
       const h = annotationHistoryRedo(get().annotationPast, get().annotations, get().annotationFuture);
-      set({ annotations: h.current, annotationPast: h.past, annotationFuture: h.future, selectedAnnotation: null });
+      set({ annotations: h.current, annotationPast: h.past, annotationFuture: h.future, selectedAnnotation: null, focusedTrackIds: [] });
     },
     importAnnotations: (items) => {
       const imported = validateAnnotations(items, { duration: get().segment?.duration ?? 0 }).map((a) => ({ ...a, id: nid(), source: "file" as const }));
@@ -802,9 +1025,47 @@ export const useEegStore = create<AppState>((set, get) => {
     },
 
     selectAnnotation: (id) => {
-      set({ selectedAnnotation: id });
       const a = get().annotations.find((x) => x.id === id);
-      if (a) get().seekEeg(a.start);
+      if (!a) {
+        set({ selectedAnnotation: null, focusedTrackIds: [] });
+        return;
+      }
+      playback.seek(a.start);
+      const nav = commitNavigation({
+        type: "select-annotation",
+        id: a.id,
+        startSec: a.start,
+        endSec: a.end,
+      });
+      set({ focusedTrackIds: [...(annotationTrackIds(a) ?? [])] });
+      refreshDisplayWindow(nav.viewport.startSec, nav.viewport.durationSec);
+    },
+
+    nextAnnotation: (direction) => {
+      const eligible = get().annotations
+        .filter((a) => a.source !== "auto" || (get().showAuto && a.type !== "qrs"))
+        .sort((a, b) => a.start - b.start || a.end - b.end || a.id.localeCompare(b.id));
+      if (eligible.length === 0) return;
+      const selected = get().selectedAnnotation;
+      const selectedIndex = selected ? eligible.findIndex((a) => a.id === selected) : -1;
+      let index: number;
+      if (selectedIndex >= 0) {
+        index = (selectedIndex + direction + eligible.length) % eligible.length;
+      } else {
+        const cursor = get().reviewCursorEeg;
+        if (direction > 0) index = eligible.findIndex((a) => a.start > cursor + 1e-6);
+        else {
+          index = eligible.length - 1;
+          for (let i = eligible.length - 1; i >= 0; i--) {
+            if (eligible[i]!.start < cursor - 1e-6) {
+              index = i;
+              break;
+            }
+          }
+        }
+        if (index < 0) index = 0;
+      }
+      get().selectAnnotation(eligible[index]!.id);
     },
 
     setShowAuto: (v) => {
@@ -817,14 +1078,7 @@ export const useEegStore = create<AppState>((set, get) => {
     setPendingType: (t) => set({ pendingType: t }),
 
     exportAnnotations: () => {
-      const data = get().annotations.map((a) => ({
-        start: a.start,
-        end: a.end,
-        type: a.type,
-        text: a.text,
-        track: a.trackId,
-        source: a.source,
-      }));
+      const data = get().annotations.map(annotationToExport);
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

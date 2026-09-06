@@ -1,22 +1,30 @@
 "use client";
 
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
-import { Download, Redo2, Trash2, Undo2, Upload } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Redo2, Trash2, Undo2, Upload } from "lucide-react";
 import { ANNOTATION_TYPES, MORPH_COLOR } from "@/lib/eeg/defaults";
-import { AnnotationImportError, parseAnnotationsJson } from "@/lib/eeg/annotations";
+import {
+  AnnotationImportError,
+  annotationSourceLabel,
+  annotationTrackIds,
+  parseAnnotationsJson,
+  snapAnnotationTime,
+} from "@/lib/eeg/annotations";
+import { MORPH_HELP } from "@/lib/eeg/patterns";
 import type { Annotation, MorphologyType } from "@/lib/eeg/types";
 import { formatTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useEegStore } from "@/store/eeg-store";
 
 const DEFAULT_DURATION = 1;
-type EditorDraft = Pick<Annotation, "start" | "end" | "trackId" | "type" | "text">;
+type EditorDraft = Pick<Annotation, "start" | "end" | "trackId" | "trackIds" | "type" | "text">;
 
 function draftFor(annotation: Annotation): EditorDraft {
   return {
     start: annotation.start,
     end: annotation.end,
     trackId: annotation.trackId,
+    trackIds: annotation.trackIds ? [...annotation.trackIds] : undefined,
     type: annotation.type,
     text: annotation.text,
   };
@@ -47,8 +55,8 @@ function NumberField({
         min="0"
         max={max}
         step="0.01"
-        value={Number.isFinite(value) ? value : 0}
-        onChange={(event) => onChange(event.currentTarget.valueAsNumber)}
+        value={snapAnnotationTime(value)}
+        onChange={(event) => onChange(snapAnnotationTime(event.currentTarget.valueAsNumber))}
         className="h-8 min-w-0 rounded-sm border border-border bg-bg px-2 font-mono text-xs tabular-nums text-fg outline-none transition-colors focus:border-accent"
       />
     </label>
@@ -58,8 +66,10 @@ function NumberField({
 export function EventList() {
   const annotations = useEegStore((s) => s.annotations);
   const selectedId = useEegStore((s) => s.selectedAnnotation);
+  const focusedTrackIds = useEegStore((s) => s.focusedTrackIds);
   const showAuto = useEegStore((s) => s.showAuto);
   const selectAnnotation = useEegStore((s) => s.selectAnnotation);
+  const nextAnnotation = useEegStore((s) => s.nextAnnotation);
   const addAnnotation = useEegStore((s) => s.addAnnotation);
   const updateAnnotation = useEegStore((s) => s.updateAnnotation);
   const removeAnnotation = useEegStore((s) => s.removeAnnotation);
@@ -79,7 +89,7 @@ export function EventList() {
   const [sourceFilter, setSourceFilter] = useState<"all" | Annotation["source"]>("all");
   const [newType, setNewType] = useState<MorphologyType>(pendingType);
   const [newText, setNewText] = useState("");
-  const [newStart, setNewStart] = useState(playheadEeg);
+  const [newStart, setNewStart] = useState(() => snapAnnotationTime(playheadEeg));
   const [newDuration, setNewDuration] = useState(DEFAULT_DURATION);
   const [newTrackId, setNewTrackId] = useState("");
   const [draft, setDraft] = useState<EditorDraft | null>(null);
@@ -89,18 +99,30 @@ export function EventList() {
   const tracks = segment?.tracks ?? [];
   const duration = segment?.duration ?? 0;
   const isEditable = selected?.source === "user";
+  const trackLabels = new Map(tracks.map((track) => [track.id, track.label]));
+  const hasNavigableAnnotations = annotations.some(
+    (annotation) => annotation.source !== "auto" || (showAuto && annotation.type !== "qrs"),
+  );
+
+  function channelsFor(annotation: Annotation): string {
+    const ids = annotationTrackIds(annotation) ?? [];
+    if (ids.length === 0) return "All channels";
+    return ids.map((id) => trackLabels.get(id) ?? id).join(", ");
+  }
+
+  function focusedChannelsFor(annotation: Annotation): string {
+    if (focusedTrackIds.length === 0) return channelsFor(annotation);
+    return focusedTrackIds.map((id) => trackLabels.get(id) ?? id).join(", ");
+  }
 
   useEffect(() => setNewType(pendingType), [pendingType]);
-  useEffect(
-    () => setDraft(selected ? draftFor(selected) : null),
-    [selected],
-  );
+  useEffect(() => setDraft(selected ? draftFor(selected) : null), [selected]);
 
   const visible = annotations
     .filter((annotation) => annotation.source !== "auto" || (showAuto && annotation.type !== "qrs"))
     .filter((annotation) => sourceFilter === "all" || annotation.source === sourceFilter)
     .filter((annotation) =>
-      `${annotation.type} ${annotation.text} ${annotation.trackId ?? ""}`
+      `${annotation.type} ${annotation.text} ${annotation.trackId ?? ""} ${annotation.trackIds?.join(" ") ?? ""}`
         .toLowerCase()
         .includes(query.trim().toLowerCase()),
     )
@@ -109,12 +131,11 @@ export function EventList() {
   function submitNew(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!segment) return;
-    const start = Number.isFinite(newStart)
-      ? Math.max(0, Math.min(newStart, duration))
-      : playheadEeg;
-    const end = Math.min(
-      duration,
-      start + Math.max(0, Number.isFinite(newDuration) ? newDuration : 0),
+    const start = snapAnnotationTime(
+      Number.isFinite(newStart) ? Math.max(0, Math.min(newStart, duration)) : playheadEeg,
+    );
+    const end = snapAnnotationTime(
+      Math.min(duration, start + Math.max(0, Number.isFinite(newDuration) ? newDuration : 0)),
     );
     addAnnotation({
       start,
@@ -132,17 +153,13 @@ export function EventList() {
   function saveDraft(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected || !draft || !isEditable || !segment) return;
-    if (
-      !Number.isFinite(draft.start) ||
-      !Number.isFinite(draft.end) ||
-      draft.start < 0 ||
-      draft.end < draft.start ||
-      draft.end > duration
-    ) {
+    const start = snapAnnotationTime(Math.max(0, Math.min(draft.start, duration)));
+    const end = snapAnnotationTime(Math.max(0, Math.min(draft.end, duration)));
+    if (!Number.isFinite(draft.start) || !Number.isFinite(draft.end) || end < start) {
       setMessage("Use times within this recording, with end at or after start.");
       return;
     }
-    updateAnnotation(selected.id, { ...draft, text: draft.text.trim() });
+    updateAnnotation(selected.id, { ...draft, start, end, text: draft.text.trim() });
     setMessage("Marker updated.");
   }
 
@@ -208,10 +225,10 @@ export function EventList() {
           />
           <button
             type="button"
-            onClick={() => setNewStart(Number(playheadEeg.toFixed(2)))}
+            onClick={() => setNewStart(snapAnnotationTime(playheadEeg))}
             className="text-left text-[0.625rem] text-muted underline decoration-border underline-offset-2 hover:text-fg"
           >
-            Use cursor ({formatTime(playheadEeg)})
+            Use cursor ({formatTime(snapAnnotationTime(playheadEeg))})
           </button>
         </div>
         <NumberField
@@ -291,17 +308,41 @@ export function EventList() {
         <label className="sr-only" htmlFor="annotation-source">
           Filter marker source
         </label>
-        <select
-          id="annotation-source"
-          value={sourceFilter}
-          onChange={(event) => setSourceFilter(event.currentTarget.value as typeof sourceFilter)}
-          className="h-8 rounded-sm border border-border bg-bg px-2 text-xs text-fg outline-none focus:border-accent"
-        >
-          <option value="all">All sources</option>
-          <option value="user">Mine</option>
-          <option value="file">File</option>
-          <option value="auto">Suggested</option>
-        </select>
+        <div className="flex min-w-0 gap-1">
+          <select
+            id="annotation-source"
+            value={sourceFilter}
+            onChange={(event) => setSourceFilter(event.currentTarget.value as typeof sourceFilter)}
+            className="h-8 min-w-0 rounded-sm border border-border bg-bg px-2 text-xs text-fg outline-none focus:border-accent"
+          >
+            <option value="all">All sources</option>
+            <option value="user">Mine</option>
+            <option value="file">File</option>
+            <option value="auto">Suggested</option>
+          </select>
+          <Button
+            size="iconSm"
+            variant="ghost"
+            type="button"
+            onClick={() => nextAnnotation(-1)}
+            disabled={!hasNavigableAnnotations}
+            aria-label="Previous event"
+            title="Previous event (P)"
+          >
+            <ChevronLeft aria-hidden="true" />
+          </Button>
+          <Button
+            size="iconSm"
+            variant="ghost"
+            type="button"
+            onClick={() => nextAnnotation(1)}
+            disabled={!hasNavigableAnnotations}
+            aria-label="Next event"
+            title="Next event (N)"
+          >
+            <ChevronRight aria-hidden="true" />
+          </Button>
+        </div>
       </div>
       <ul className="max-h-48 space-y-1 overflow-auto" aria-label="Review markers">
         {visible.length === 0 && (
@@ -323,13 +364,26 @@ export function EventList() {
               <span className="w-12 shrink-0 font-mono tabular-nums text-muted">
                 {formatTime(annotation.start)}
               </span>
-              <span className="min-w-0 flex-1 truncate text-fg">
-                {ANNOTATION_TYPES.find((type) => type.id === annotation.type)?.label ??
-                  annotation.type}
+              <span className="min-w-0 flex-1 truncate text-fg" title={channelsFor(annotation)}>
+                <span className="font-medium">
+                  {ANNOTATION_TYPES.find((type) => type.id === annotation.type)?.label ??
+                    annotation.type}
+                </span>
+                <span className="text-muted"> · {channelsFor(annotation)}</span>
                 {annotation.text ? ` · ${annotation.text}` : ""}
               </span>
-              <span className="text-[0.625rem] uppercase text-subtle">
-                {annotation.source === "auto" ? "sug" : annotation.source}
+              <span className="shrink-0 font-mono text-[0.625rem] tabular-nums text-subtle">
+                {formatTime(Math.max(0, annotation.end - annotation.start), true)}
+              </span>
+              <span
+                className="shrink-0 text-[0.5625rem] uppercase text-subtle"
+                title={annotationSourceLabel(annotation.source)}
+              >
+                {annotation.source === "auto"
+                  ? "suggested"
+                  : annotation.source === "file"
+                    ? "file"
+                    : "mine"}
               </span>
             </button>
           </li>
@@ -341,10 +395,12 @@ export function EventList() {
           className="space-y-2 rounded-md border border-border bg-surface p-2"
           onSubmit={saveDraft}
           aria-label="Selected marker"
+          aria-live="polite"
+          data-selected-event={selected.id}
         >
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs font-medium text-fg">
-              Selected · {selected.source === "user" ? "editable" : "read-only suggestion"}
+              Selected · {annotationSourceLabel(selected.source)}
             </p>
             {selected.source === "file" && (
               <Button
@@ -357,6 +413,32 @@ export function EventList() {
               </Button>
             )}
           </div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-sm border border-border/60 bg-bg px-2 py-1.5 text-[0.625rem]">
+            <span className="text-subtle">Time</span>
+            <span className="font-mono text-right tabular-nums text-fg">
+              {formatTime(selected.start, true)}–{formatTime(selected.end, true)}
+            </span>
+            <span className="text-subtle">Duration</span>
+            <span className="font-mono text-right tabular-nums text-fg">
+              {formatTime(Math.max(0, selected.end - selected.start), true)}
+            </span>
+            <span className="text-subtle">Channels</span>
+            <span className="truncate text-right text-fg" title={focusedChannelsFor(selected)}>
+              {focusedChannelsFor(selected)}
+            </span>
+            {selected.source === "auto" && (
+              <>
+                <span className="text-subtle">Heuristic score</span>
+                <span className="font-mono text-right tabular-nums text-fg">
+                  {(selected.confidence * 100).toFixed(0)}%
+                </span>
+              </>
+            )}
+          </div>
+          <p className="text-[0.6875rem] leading-4 text-muted">
+            {MORPH_HELP[selected.type]}{" "}
+            {selected.source === "auto" && "This is an educational suggestion, not a diagnosis."}
+          </p>
           {isEditable ? (
             <>
               <div className="grid grid-cols-2 gap-2">
@@ -375,27 +457,40 @@ export function EventList() {
                   onChange={(end) => setDraft({ ...draft, end })}
                 />
               </div>
-              <label
-                className="grid gap-1 text-[0.625rem] font-medium uppercase tracking-wide text-subtle"
-                htmlFor="selected-channel"
-              >
-                Channel
-                <select
-                  id="selected-channel"
-                  value={draft.trackId ?? ""}
-                  onChange={(event) =>
-                    setDraft({ ...draft, trackId: event.currentTarget.value || null })
-                  }
-                  className="h-8 rounded-sm border border-border bg-bg px-2 text-xs text-fg outline-none focus:border-accent"
+              {draft.trackIds && draft.trackIds.length > 1 ? (
+                <div className="grid gap-1 text-[0.625rem] font-medium uppercase tracking-wide text-subtle">
+                  Channels
+                  <p className="rounded-sm border border-border bg-bg px-2 py-1.5 text-xs font-normal normal-case text-fg">
+                    {channelsFor({ ...selected, trackIds: draft.trackIds })}
+                  </p>
+                </div>
+              ) : (
+                <label
+                  className="grid gap-1 text-[0.625rem] font-medium uppercase tracking-wide text-subtle"
+                  htmlFor="selected-channel"
                 >
-                  <option value="">All channels</option>
-                  {tracks.map((track) => (
-                    <option key={track.id} value={track.id}>
-                      {track.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  Channel
+                  <select
+                    id="selected-channel"
+                    value={draft.trackId ?? ""}
+                    onChange={(event) =>
+                      setDraft({
+                        ...draft,
+                        trackId: event.currentTarget.value || null,
+                        trackIds: undefined,
+                      })
+                    }
+                    className="h-8 rounded-sm border border-border bg-bg px-2 text-xs text-fg outline-none focus:border-accent"
+                  >
+                    <option value="">All channels</option>
+                    {tracks.map((track) => (
+                      <option key={track.id} value={track.id}>
+                        {track.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label
                 className="grid gap-1 text-[0.625rem] font-medium uppercase tracking-wide text-subtle"
                 htmlFor="selected-type"

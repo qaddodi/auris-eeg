@@ -12,11 +12,16 @@ function isTypingTarget(el: EventTarget | null): boolean {
   return Boolean(element?.closest("button, a, [role='button'], [role='menuitem']"));
 }
 
-export function useEditorKeys() {
+export function useEditorKeys(onToggleFocus?: () => void) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target)) return;
       const s = useEegStore.getState();
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        onToggleFocus?.();
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && !e.altKey) {
         if (e.key.toLowerCase() === "z") {
           e.preventDefault();
@@ -28,7 +33,10 @@ export function useEditorKeys() {
         }
         return;
       }
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Alt+Arrow is a documented fine seek. Other modified shortcuts remain
+      // browser/application-owned and should pass through untouched.
+      const fineSeek = e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight");
+      if (e.metaKey || e.ctrlKey || (e.altKey && !fineSeek)) return;
       if (e.code === "Space") {
         e.preventDefault();
         void s.togglePlay();
@@ -98,6 +106,17 @@ export function useEditorKeys() {
       }
       if (!s.segment) return;
 
+      if (!e.shiftKey && (e.key === "n" || e.key === "N")) {
+        e.preventDefault();
+        s.nextAnnotation(1);
+        return;
+      }
+      if (!e.shiftKey && (e.key === "p" || e.key === "P")) {
+        e.preventDefault();
+        s.nextAnnotation(-1);
+        return;
+      }
+
       if (e.key === "Home") {
         e.preventDefault();
         s.seekEeg(0);
@@ -143,5 +162,5 @@ export function useEditorKeys() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [onToggleFocus]);
 }

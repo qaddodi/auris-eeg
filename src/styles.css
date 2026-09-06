@@ -11,8 +11,8 @@
   --color-surface: #101216;
   --color-surface-2: #171a20;
   --color-fg: #e8eaed;
-  --color-muted: #8b919c;
-  --color-subtle: #5c6370;
+  --color-muted: #9aa2ad;
+  --color-subtle: #747d89;
   --color-border: rgb(232 234 237 / 10%);
   --color-accent: #7eb8c9;
   --color-accent-fg: #07080a;
@@ -57,6 +57,7 @@
 
   body {
     font-family: var(--font-sans);
+    overflow: hidden;
   }
 
   button:not(:disabled),
@@ -85,10 +86,34 @@
 
   select {
     color-scheme: dark;
+    font-size: 0.75rem;
   }
 
   ::selection {
     background: color-mix(in oklab, var(--color-accent) 35%, transparent);
+  }
+}
+
+@layer components {
+  .workstation-shell {
+    isolation: isolate;
+  }
+
+  .workstation-header,
+  .transport-bar,
+  .review-toolbar {
+    contain: layout paint;
+  }
+
+  .focus-edge-strip {
+    contain: layout paint;
+  }
+
+  .review-toolbar select,
+  .transport-bar button,
+  .workstation-header button,
+  .workstation-header select {
+    min-height: 2rem;
   }
 }
 
@@ -97,6 +122,10 @@
   input,
   button {
     touch-action: manipulation;
+  }
+
+  .workstation-header {
+    padding-inline: 0.5rem;
   }
 }
 
