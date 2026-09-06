@@ -12,6 +12,7 @@ import {
 } from "@/lib/eeg/view";
 import { MORPH_COLOR } from "@/lib/eeg/defaults";
 import { displayScaleForChannel } from "@/lib/eeg/display";
+import { CSS_PX_PER_MM, nominalMmForVoltage, waveformPlotWidth } from "@/lib/eeg/display-geometry";
 import { hitTestAnnotations, layoutAnnotations } from "@/lib/eeg/annotation-layout";
 import {
   cachedEkgDisplayProfile,
@@ -169,6 +170,7 @@ export function WaveformView() {
   const dsaRef = useRef<HTMLCanvasElement>(null);
   const dsaOverlayRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
   const overviewWrapRef = useRef<HTMLDivElement>(null);
   const dsaWrapRef = useRef<HTMLDivElement>(null);
   const hoveredTrackRef = useRef<string | null>(null);
@@ -201,6 +203,7 @@ export function WaveformView() {
   const panView = useEegStore((s) => s.panView);
   const zoomAt = useEegStore((s) => s.zoomAt);
   const showDsa = useEegStore((s) => s.showDsa);
+  const viewDuration = useEegStore((s) => s.viewDuration);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -210,6 +213,7 @@ export function WaveformView() {
     const dsa = dsaRef.current;
     const dsaOv = dsaOverlayRef.current;
     const wrap = wrapRef.current;
+    const surface = surfaceRef.current;
     const ovWrap = overviewWrapRef.current;
     const dsaWrap = dsaWrapRef.current;
     if (
@@ -218,6 +222,7 @@ export function WaveformView() {
       !overview ||
       !ovOverlay ||
       !wrap ||
+      !surface ||
       !ovWrap ||
       !dsa ||
       !dsaOv ||
@@ -264,7 +269,7 @@ export function WaveformView() {
       const displayStart = editorSegment?.start ?? 0;
 
       const dpr = Math.min(2, window.devicePixelRatio || 1);
-      const cssW = wrap.clientWidth;
+      const cssW = surface.clientWidth;
       const cssH = wrap.clientHeight;
       const ovW = ovWrap.clientWidth;
       const ovH = ovWrap.clientHeight;
@@ -438,8 +443,11 @@ export function WaveformView() {
   const onEditorPointer = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!segment || !wrapRef.current) return;
     const rect = wrapRef.current.getBoundingClientRect();
-    const plotW = rect.width - GUTTER;
-    const x = e.clientX - rect.left - GUTTER;
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const plotW = surface.clientWidth - GUTTER;
+    const contentX = e.clientX - rect.left + wrapRef.current.scrollLeft;
+    const x = contentX - GUTTER;
     if (x < 0) return;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     const s = useEegStore.getState();
@@ -461,7 +469,7 @@ export function WaveformView() {
       : [];
     const annotationId = hitTestAnnotations(
       annotationCandidates,
-      e.clientX - rect.left,
+      contentX,
       y,
       {
         viewStart: vs,
@@ -561,12 +569,13 @@ export function WaveformView() {
       const list = (state.displaySegment?.tracks ?? state.segment?.tracks ?? []).filter(
         (track) => track.kind !== "extra",
       );
-      if (rect && e.clientX - rect.left >= GUTTER && list.length > 0) {
-        const plotW = Math.max(1, rect.width - GUTTER);
+      const contentX = rect ? e.clientX - rect.left + (wrapRef.current?.scrollLeft ?? 0) : 0;
+      if (rect && contentX >= GUTTER && list.length > 0) {
+        const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - GUTTER);
         const laneH = Math.max(1, (rect.height - RULER) / list.length);
         const lane = Math.floor((e.clientY - rect.top - RULER) / laneH);
         const next = list[lane]?.id ?? null;
-        const frac = clamp((e.clientX - rect.left - GUTTER) / plotW, 0, 1);
+        const frac = clamp((e.clientX - rect.left + (wrapRef.current?.scrollLeft ?? 0) - GUTTER) / plotW, 0, 1);
         const timeSec = timeAtFraction(frac, state.viewStart, state.viewDuration);
         const hover = { timeSec, trackId: next };
         if (
@@ -584,8 +593,8 @@ export function WaveformView() {
     const s = useEegStore.getState();
     if (drag.kind === "caliper" && wrapRef.current) {
       const rect = wrapRef.current.getBoundingClientRect();
-      const plotW = Math.max(1, rect.width - GUTTER);
-      const x = e.clientX - rect.left - GUTTER;
+      const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - GUTTER);
+      const x = e.clientX - rect.left + wrapRef.current.scrollLeft - GUTTER;
       const frac = clamp(x / plotW, 0, 1);
       const follow = s.followPlayhead && playback.playing;
       const vs = follow
@@ -601,8 +610,8 @@ export function WaveformView() {
     }
     if (drag.kind === "scrub" && wrapRef.current) {
       const rect = wrapRef.current.getBoundingClientRect();
-      const plotW = Math.max(1, rect.width - GUTTER);
-      const x = e.clientX - rect.left - GUTTER;
+      const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - GUTTER);
+      const x = e.clientX - rect.left + wrapRef.current.scrollLeft - GUTTER;
       const frac = clamp(x / plotW, 0, 1);
       const follow = s.followPlayhead && playback.playing;
       const vs = follow
@@ -683,13 +692,13 @@ export function WaveformView() {
         return;
       }
       const rect = wrap.getBoundingClientRect();
-      const x = e.clientX - rect.left - GUTTER;
+      const x = e.clientX - rect.left + wrap.scrollLeft - GUTTER;
       const s = useEegStore.getState();
       const follow = s.followPlayhead && playback.playing;
       const vs = follow
         ? followViewStart(eegNow(s), s.viewDuration, s.segment!.duration)
         : s.viewStart;
-      const frac = clamp(x / Math.max(1, rect.width - GUTTER), 0, 1);
+      const frac = clamp(x / Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - GUTTER), 0, 1);
       const anchor = s.followPlayhead ? eegNow(s) : timeAtFraction(frac, vs, s.viewDuration);
       const factor = e.deltaY > 0 ? 1.12 : 1 / 1.12;
       zoomAt(factor, anchor);
@@ -747,39 +756,42 @@ export function WaveformView() {
 
       <div
         ref={wrapRef}
-        className="relative min-h-0 flex-1 overflow-hidden bg-bg select-none"
+        className="relative min-h-0 flex-1 overflow-auto bg-bg select-none"
         onPointerDown={onEditorPointer}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onPointerLeave={onPointerLeave}
       >
-        <canvas ref={editorRef} className="absolute inset-0 size-full" />
-        <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
-        {list.length > 0 && (
-          <div
-            className="pointer-events-none absolute bottom-0 left-0 z-10 w-[132px]"
-            style={{ top: RULER }}
-          >
-            {list.map((tr) => (
-              <TrackGutter key={tr.id} track={tr} count={list.length} compact={list.length > 12} />
-            ))}
-          </div>
-        )}
-        {(status === "loading" || busy) && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-bg/70 text-sm text-muted">
-            {status === "loading" ? "Reading recording…" : "Preparing sound…"}
-          </div>
-        )}
-        {status !== "ready" && status !== "loading" && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 px-6 text-center">
+        <div
+          ref={surfaceRef}
+          className="relative min-h-full"
+          style={{ width: `${GUTTER + waveformPlotWidth(viewDuration)}px` }}
+        >
+          <canvas ref={editorRef} className="absolute inset-0 size-full" />
+          <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
+          {list.length > 0 && (
+            <div className="pointer-events-none absolute bottom-0 left-0 z-10 w-[132px]" style={{ top: RULER }}>
+              {list.map((tr) => (
+                <TrackGutter key={tr.id} track={tr} count={list.length} compact={list.length > 12} />
+              ))}
+            </div>
+          )}
+          {(status === "loading" || busy) && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-bg/70 text-sm text-muted">
+              {status === "loading" ? "Reading recording…" : "Preparing sound…"}
+            </div>
+          )}
+          {status !== "ready" && status !== "loading" && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 px-6 text-center">
             <p className="font-display text-xl tracking-tight text-fg">Auris</p>
             <p className="max-w-sm text-pretty text-sm text-muted">
               Open a deidentified EDF/EDF+ file, or load the demo tracing. All processing stays in
               this browser.
             </p>
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -913,9 +925,12 @@ function drawEditor(
   });
 
   if (list.length > 0 && laneH > 18) {
-    const mid = plotTop + laneH / 2;
-    const half = (laneH * 0.92) / 2;
-    const x = cssW - 5;
+    const markerUvPeakToPeak = s.sensitivityUv * 10;
+    const markerMm = nominalMmForVoltage(markerUvPeakToPeak, s.sensitivityUv);
+    const markerPx = markerMm * CSS_PX_PER_MM;
+    const half = markerPx / 2;
+    const x = plotX + 14;
+    const mid = plotTop + Math.min(laneH / 2, half + 8);
     ctx.strokeStyle = "rgba(232,234,237,0.55)";
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -926,9 +941,9 @@ function drawEditor(
     ctx.stroke();
     ctx.fillStyle = "#8b919c";
     ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
-    ctx.textAlign = "right";
+    ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-    ctx.fillText(`${s.sensitivityUv} µV`, x - 8, mid);
+    ctx.fillText(`${(markerMm * s.sensitivityUv).toFixed(0)} µV p–p = ${markerMm} mm nominal`, x + 8, mid);
     ctx.textAlign = "left";
   }
 }

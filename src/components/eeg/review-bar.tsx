@@ -5,6 +5,7 @@ import { Activity, Eye, EyeOff, Lightbulb, MousePointer2, Ruler } from "lucide-r
 import { HFF_PRESETS, LFF_PRESETS, PAGE_PRESETS, SENSITIVITY_PRESETS } from "@/lib/eeg/defaults";
 import type { MontageKind } from "@/lib/eeg/types";
 import { cn } from "@/lib/utils";
+import { PAPER_SPEED_MM_PER_SEC } from "@/lib/eeg/display-geometry";
 import { useEegStore } from "@/store/eeg-store";
 
 const selectClass =
@@ -54,7 +55,7 @@ export function ReviewBar() {
           <option value="custom">Custom</option>
         </select>
       </Field>
-      <Field label="Timebase · 30 mm/sec">
+      <Field label={`Timebase · ${PAPER_SPEED_MM_PER_SEC} nominal mm/sec`}>
         <div className="flex items-center gap-1">
           <select
             className={selectClass}
@@ -125,7 +126,7 @@ export function ReviewBar() {
           <option value="on">60 Hz</option>
         </select>
       </Field>
-      <Field label="Sensitivity">
+      <Field label="EEG sensitivity">
         <select
           className={selectClass}
           value={sensitivity}
@@ -133,7 +134,7 @@ export function ReviewBar() {
         >
           {SENSITIVITY_PRESETS.map((value) => (
             <option key={value} value={value}>
-              {value} µV/mm
+              {value} µV/mm nominal
             </option>
           ))}
         </select>

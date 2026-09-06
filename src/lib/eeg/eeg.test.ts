@@ -42,6 +42,7 @@ import {
 } from "./synthetic.ts";
 import {
   clampView,
+  DEFAULT_VIEW_SEC,
   envelopeWindow,
   fitSensitivityUv,
   followViewStart,
@@ -61,6 +62,12 @@ import { voltageToMidi, waveAbnormality } from "./contour.ts";
 import { MixerEngine, mixdownTracks } from "./audio.ts";
 import { stableTraceColor } from "./colors.ts";
 import { displayScaleForChannel, ekgDisplayProfile, normalizeEkgValue } from "./display.ts";
+import {
+  CSS_PX_PER_MM,
+  nominalMmForVoltage,
+  pixelsPerSecond,
+  waveformPlotWidth,
+} from "./display-geometry.ts";
 import { detectMorphologies } from "./patterns.ts";
 import { scrubPreviewTime } from "./scrub.ts";
 import {
@@ -492,7 +499,8 @@ describe("editor view", () => {
     assert.equal(stepSensitivity(15, -1), 10);
     assert.equal(snapSensitivity(68), 70);
     assert.equal(clampSensitivity(3), 3);
-    assert.ok(voltagePxPerUv(40, 70) > voltagePxPerUv(40, 150));
+    assert.ok(voltagePxPerUv(70) > voltagePxPerUv(150));
+    assert.notEqual(voltagePxPerUv(7), voltagePxPerUv(9));
     assert.equal(DEFAULT_SENSITIVITY_UV, 7);
   });
 
@@ -503,8 +511,19 @@ describe("editor view", () => {
     const q = fitSensitivityUv([{ samples: quiet, sampleRate: fs, kind: "eeg" }], 0, 1);
     const l = fitSensitivityUv([{ samples: loud, sampleRate: fs, kind: "eeg" }], 0, 1);
     assert.ok(q < l, `quiet ${q} loud ${l}`);
-    assert.ok(q <= 50, `quiet fit ${q}`);
-    assert.ok(l >= 150, `loud fit ${l}`);
+    assert.ok(q >= 1 && q < l, `quiet ${q} loud ${l}`);
+    assert.ok(nominalMmForVoltage(2 * 8, q) > 5);
+  });
+
+  it("uses nominal paper geometry for EEG voltage and time", () => {
+    assert.equal(nominalMmForVoltage(7, 7), 1);
+    assert.equal(nominalMmForVoltage(70, 7), 10);
+    assert.equal(pixelsPerSecond(), 30 * CSS_PX_PER_MM);
+    assert.equal(waveformPlotWidth(1), 30 * CSS_PX_PER_MM);
+    assert.equal(waveformPlotWidth(10), 300 * CSS_PX_PER_MM);
+    assert.equal(DEFAULT_VIEW_SEC, 10);
+    assert.equal(displayScaleForChannel(40, 7, "eeg"), displayScaleForChannel(400, 7, "eeg"));
+    assert.equal(displayScaleForChannel(40, 7, "eeg"), CSS_PX_PER_MM / 7);
   });
 });
 
@@ -525,6 +544,7 @@ describe("display normalization and semantic colors", () => {
     assert.ok(Math.abs(normalizeEkgValue(240, profile)) < 20);
     assert.ok(Math.abs(normalizeEkgValue(12000, profile)) <= profile.clipUv);
     assert.notEqual(displayScaleForChannel(40, 70, "eeg"), displayScaleForChannel(40, 300, "eeg"));
+    assert.equal(displayScaleForChannel(40, 7, "ekg", profile), displayScaleForChannel(40, 300, "ekg", profile));
   });
 
   it("assigns trace colors from stable identity, not visible order", () => {

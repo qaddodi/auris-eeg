@@ -1,4 +1,5 @@
 import type { FilterSettings, MorphologyType, SonifySettings } from "./types.ts";
+import { pixelsPerUv } from "./display-geometry.ts";
 
 export const DEFAULT_FILTERS: FilterSettings = {
   bandpass: false,
@@ -41,8 +42,6 @@ export const SENSITIVITY_PRESETS = [
 export const MIN_SENSITIVITY_UV = 1;
 export const MAX_SENSITIVITY_UV = 2000;
 export const DEFAULT_SENSITIVITY_UV = 7;
-/** Fraction of a channel lane filled by `sensitivityUv` peak-to-peak. */
-export const LANE_FILL = 0.92;
 
 export function clampSensitivity(n: number): number {
   if (!Number.isFinite(n)) return DEFAULT_SENSITIVITY_UV;
@@ -78,8 +77,8 @@ export function snapSensitivity(n: number): number {
   return best;
 }
 
-export function voltagePxPerUv(laneH: number, sensitivityUv: number): number {
-  return (laneH * LANE_FILL) / Math.max(MIN_SENSITIVITY_UV, sensitivityUv);
+export function voltagePxPerUv(sensitivityUv: number): number {
+  return pixelsPerUv(Math.max(MIN_SENSITIVITY_UV, sensitivityUv));
 }
 
 export const LFF_PRESETS = [0, 0.5, 1, 1.6, 5] as const;

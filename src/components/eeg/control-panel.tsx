@@ -352,11 +352,12 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
               <div className="flex items-center justify-between gap-2">
                 <Label>Sensitivity</Label>
                 <span className="font-mono text-xs tabular-nums text-muted">
-                  {sensitivityUv} µV p–p
+                  {sensitivityUv} µV/mm nominal
                 </span>
               </div>
               <p className="text-[0.6875rem] text-subtle">
-                Lower µV = bigger waves. Fit sizes the page to the tracing.
+                EEG gain uses nominal CSS paper scale; lower µV/mm makes bigger waves. Fit targets a
+                10 mm nominal trace height. Exact physical millimetres depend on browser/display calibration.
               </p>
               <div className="flex items-center gap-2">
                 <button

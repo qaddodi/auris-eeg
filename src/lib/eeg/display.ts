@@ -1,5 +1,6 @@
 import { percentileAbs } from "./preprocessing.ts";
 import type { ChannelKind } from "./types.ts";
+import { pixelsPerUv } from "./display-geometry.ts";
 
 /**
  * Display-only normalization for auxiliary cardiac traces.
@@ -59,15 +60,15 @@ export function ekgDisplayProfile(samples: Float32Array): EkgDisplayProfile {
 }
 
 export function displayScaleForChannel(
-  laneHeight: number,
+  _laneHeight: number,
   sensitivityUv: number,
   kind: ChannelKind,
   ekg: EkgDisplayProfile | null = null,
 ): number {
   if (kind === "ekg" && ekg) {
-    return (Math.max(1, laneHeight) * 0.36) / Math.max(1e-6, ekg.robustPeakUv);
+    return (Math.max(1, _laneHeight) * 0.36) / Math.max(1e-6, ekg.robustPeakUv);
   }
-  return (Math.max(1, laneHeight) * 0.92) / Math.max(10, sensitivityUv);
+  return pixelsPerUv(sensitivityUv);
 }
 
 export function normalizeEkgValue(value: number, profile: EkgDisplayProfile): number {

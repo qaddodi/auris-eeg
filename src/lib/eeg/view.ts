@@ -130,6 +130,7 @@ export function fitSensitivityUv(
   tracks: { samples: Float32Array; sampleRate: number; kind: string }[],
   t0: number,
   t1: number,
+  desiredTraceHeightMm = 10,
 ): number {
   let p97 = 0;
   for (const tr of tracks) {
@@ -146,5 +147,8 @@ export function fitSensitivityUv(
     const v = vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.97))] ?? 0;
     if (v > p97) p97 = v;
   }
-  return snapSensitivity(clampSensitivity(Math.max(15, p97 * 2.8)));
+  // p97 is a robust peak amplitude. Fit its peak-to-peak envelope to the
+  // requested nominal paper height, yielding a real µV/mm sensitivity.
+  const heightMm = Math.max(0.1, desiredTraceHeightMm);
+  return snapSensitivity(clampSensitivity(Math.max(1, (p97 * 2) / heightMm)));
 }
