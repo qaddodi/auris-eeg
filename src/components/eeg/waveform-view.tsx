@@ -1846,8 +1846,42 @@ function drawOverviewWaves(
     const scale = displayScaleForChannel(rowHeight, s.sensitivityUv, tr.kind, profile);
     const color = traceColorForLane(laneGroup(tr, i, list), tr.kind, lat, tr.id, theme);
     if (display.mode !== "envelope") return;
-    // Peak-hold overview: every sample in a pixel still contributes to min/max.
-    drawPeakHoldEnvelope(ctx, display, 0, cssW, mid, scale, sign, color, 0.55);
+    // The overview is a navigation aid, not a full-resolution trace. Drawing
+    // a min/max bar at every pixel turns dense recordings into a solid block
+    // of color, so use a light connected envelope and only a sparse set of
+    // whiskers for brief transients.
+    ctx.globalAlpha = 0.42;
+    ctx.lineWidth = 0.8;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "butt";
+    ctx.beginPath();
+    for (let p = 0; p < display.min.length; p++) {
+      const x = ((p + 0.5) / display.min.length) * cssW;
+      const y = mid + sign * display.min[p]! * scale;
+      if (p === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.beginPath();
+    for (let p = 0; p < display.max.length; p++) {
+      const x = ((p + 0.5) / display.max.length) * cssW;
+      const y = mid + sign * display.max[p]! * scale;
+      if (p === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.18;
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    const whiskerStride = Math.max(1, Math.ceil(display.min.length / Math.max(1, cssW / 4)));
+    for (let p = 0; p < display.min.length; p += whiskerStride) {
+      const x = ((p + 0.5) / display.min.length) * cssW;
+      ctx.moveTo(x, mid + sign * display.min[p]! * scale);
+      ctx.lineTo(x, mid + sign * display.max[p]! * scale);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   });
   ctx.fillStyle = palette.muted;
   ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
