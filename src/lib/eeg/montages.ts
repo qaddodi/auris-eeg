@@ -2,24 +2,27 @@ import { aliasKeys, auxDisplayLabel, classifyLaterality, electrodeKey } from "./
 import type { ChannelInfo, ChannelKind, Derivation, Laterality, MontageKind } from "./types.ts";
 
 export const DOUBLE_BANANA: [string, string][] = [
+  // Natus-style longitudinal review order: move down each chain before
+  // moving across to the next chain. Legacy temporal names are intentional;
+  // findElectrode resolves them to modern T7/T8/P7/P8 recordings as needed.
   ["Fp1", "F7"],
   ["F7", "T3"],
   ["T3", "T5"],
   ["T5", "O1"],
-  ["Fp2", "F8"],
-  ["F8", "T4"],
-  ["T4", "T6"],
-  ["T6", "O2"],
   ["Fp1", "F3"],
   ["F3", "C3"],
   ["C3", "P3"],
   ["P3", "O1"],
+  ["Fz", "Cz"],
+  ["Cz", "Pz"],
   ["Fp2", "F4"],
   ["F4", "C4"],
   ["C4", "P4"],
   ["P4", "O2"],
-  ["Fz", "Cz"],
-  ["Cz", "Pz"],
+  ["Fp2", "F8"],
+  ["F8", "T4"],
+  ["T4", "T6"],
+  ["T6", "O2"],
 ];
 
 export const TRANSVERSE: [string, string][] = [

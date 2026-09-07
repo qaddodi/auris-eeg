@@ -52,43 +52,68 @@ const DISPLAY_KIND_ORDER: Record<ProcessedTrack["kind"], number> = {
   ekg: 2,
 };
 
-function electrodeRank(label: string): number {
-  const token = label
-    .split(/[–-]/)[0]
-    ?.trim()
-    .toUpperCase()
-    .replace(/^(EEG|EOG|EMG|ECG|EKG)\s+/, "") ?? "";
-  if (/^FP/.test(token)) return 0;
-  if (/^F/.test(token)) return 1;
-  if (/^(T|FT)/.test(token)) return 2;
-  if (/^C/.test(token)) return 3;
-  if (/^P/.test(token)) return 4;
-  if (/^O/.test(token)) return 5;
-  return 6;
-}
-
-function lateralityRank(track: ProcessedTrack): number {
-  if (track.laterality === "left") return 0;
-  if (track.laterality === "right") return 1;
-  if (track.laterality === "midline") return 2;
-  return 3;
-}
-
 function orderedDisplayTracks(tracks: ProcessedTrack[]): ProcessedTrack[] {
+  // Derivations are created in the montage's clinical order. Keep that order
+  // for EEG tracks (especially the Natus-style double-banana chains) instead
+  // of sorting by the first electrode, which interleaves separate chains.
+  // Auxiliary channels are still grouped after EEG and EKG remains last.
   return tracks
     .map((track, index) => ({ track, index }))
     .sort((a, b) => {
       const kind = DISPLAY_KIND_ORDER[a.track.kind] - DISPLAY_KIND_ORDER[b.track.kind];
       if (kind !== 0) return kind;
-      if (a.track.kind === "eeg") {
-        const region = electrodeRank(a.track.label) - electrodeRank(b.track.label);
-        if (region !== 0) return region;
-        const side = lateralityRank(a.track) - lateralityRank(b.track);
-        if (side !== 0) return side;
-      }
       return a.index - b.index;
     })
     .map(({ track }) => track);
+}
+
+interface LaneRect {
+  top: number;
+  height: number;
+}
+
+function laneGroup(track: ProcessedTrack, index: number, list: ProcessedTrack[]): string {
+  if (track.kind === "ekg") return "ekg";
+  if (track.kind !== "eeg") return `aux:${track.kind}`;
+  if (!track.id.startsWith("banana:")) return "eeg";
+  const bananaIndex = list.findIndex((candidate) => candidate.id === track.id);
+  // The double-banana definition is five four-channel chains, with a
+  // two-channel midline chain in the middle.
+  if (bananaIndex < 4) return "banana:left-temporal";
+  if (bananaIndex < 8) return "banana:left-parasagittal";
+  if (bananaIndex < 10) return "banana:midline";
+  if (bananaIndex < 14) return "banana:right-parasagittal";
+  return "banana:right-temporal";
+}
+
+function laneLayout(list: ProcessedTrack[], plotHeight: number): LaneRect[] {
+  const count = list.length;
+  if (count === 0) return [];
+  const boundaries = list.reduce(
+    (total, track, index) =>
+      index > 0 && laneGroup(list[index - 1]!, index - 1, list) !== laneGroup(track, index, list)
+        ? total + 1
+        : total,
+    0,
+  );
+  // Preserve usable trace height even in compact views while making clinical
+  // chain boundaries visibly larger than ordinary lane separators.
+  const gap = boundaries > 0 ? Math.min(10, Math.max(3, plotHeight / (count * 8))) : 0;
+  const laneHeight = Math.max(1, (plotHeight - boundaries * gap) / count);
+  let top = 0;
+  return list.map((track, index) => {
+    const rect = { top, height: laneHeight };
+    top += laneHeight;
+    if (index < count - 1 && laneGroup(track, index, list) !== laneGroup(list[index + 1]!, index + 1, list)) {
+      top += gap;
+    }
+    return rect;
+  });
+}
+
+function laneAtY(list: ProcessedTrack[], plotHeight: number, y: number): number {
+  const lanes = laneLayout(list, plotHeight);
+  return lanes.findIndex((lane) => y >= lane.top && y <= lane.top + lane.height);
 }
 
 function displayBand(track: ProcessedTrack): "eeg" | "aux" | "ekg" {
@@ -408,6 +433,7 @@ export function WaveformView() {
             displayStart,
             s.focusedTrackIds,
             s.hoverCursor,
+            laneLayout(editorList, Math.max(1, cssH - RULER)),
           );
           if (!editorReady && waveSig !== "waiting-for-display-window") {
             clearWaveformCanvas(ectx, cssW, cssH, dpr);
@@ -527,11 +553,13 @@ export function WaveformView() {
     const vs = latest.viewStart;
     const frac = clamp(x / Math.max(1, plotW), 0, 1);
     const t = timeAtFraction(frac, vs, s.viewDuration);
-    const laneIds = orderedDisplayTracks(
+    const pointerTracks = orderedDisplayTracks(
       (latest.displaySegment?.tracks ?? latest.segment?.tracks ?? []).filter(
         (track) => track.kind !== "extra",
       ),
-    ).map((track) => track.id);
+    );
+    const laneIds = pointerTracks.map((track) => track.id);
+    const lanes = laneLayout(pointerTracks, Math.max(1, rect.height - RULER));
     const laneH = Math.max(1, (rect.height - RULER) / Math.max(1, laneIds.length));
     const y = e.clientY - rect.top;
     const annotationCandidates = latest.showAnnotations
@@ -551,6 +579,7 @@ export function WaveformView() {
         plotWidth: plotW,
         plotTop: RULER,
         laneHeight: laneH,
+        laneRects: lanes,
         laneIds,
         eventRailHeight: EVENT_LANE,
       },
@@ -585,7 +614,7 @@ export function WaveformView() {
       return;
     }
     if (s.tool === "caliper") {
-      const lane = y >= RULER ? Math.floor((y - RULER) / laneH) : -1;
+      const lane = y >= RULER ? laneAtY(pointerTracks, Math.max(1, rect.height - RULER), y - RULER) : -1;
       dragRef.current = { kind: "caliper", x0: e.clientX, start0: t, dur0: 0 };
       caliperRef.current = { a: t, b: t, trackId: laneIds[lane] ?? null };
       paintRef.current();
@@ -660,8 +689,11 @@ export function WaveformView() {
       const contentX = rect ? e.clientX - rect.left + (wrapRef.current?.scrollLeft ?? 0) : 0;
       if (rect && contentX >= GUTTER && list.length > 0) {
         const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - GUTTER);
-        const laneH = Math.max(1, (rect.height - RULER) / list.length);
-        const lane = Math.floor((e.clientY - rect.top - RULER) / laneH);
+        const lane = laneAtY(
+          list,
+          Math.max(1, rect.height - RULER),
+          e.clientY - rect.top - RULER,
+        );
         const next = list[lane]?.id ?? null;
         const frac = clamp((e.clientX - rect.left + (wrapRef.current?.scrollLeft ?? 0) - GUTTER) / plotW, 0, 1);
         const timeSec = timeAtFraction(frac, state.viewStart, state.viewDuration);
@@ -826,6 +858,7 @@ export function WaveformView() {
       (t) => t.kind !== "extra",
     ),
   );
+  const renderedLanes = laneLayout(list, Math.max(1, (wrapRef.current?.clientHeight ?? 600) - RULER));
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -899,6 +932,7 @@ export function WaveformView() {
                   previous={list[index - 1]}
                   count={list.length}
                   compact={list.length > 12}
+                  lane={renderedLanes[index]}
                 />
               ))}
             </div>
@@ -952,7 +986,8 @@ function drawEditor(
   const plotTop = RULER;
   const plotH = Math.max(10, cssH - RULER);
   const n = Math.max(1, list.length);
-  const laneH = plotH / n;
+  const lanes = laneLayout(list, plotH);
+  const laneH = lanes[0]?.height ?? plotH / n;
   const sign = s.negativeUp ? -1 : 1;
   const span = Math.max(1e-6, viewEnd - viewStart);
   const localViewStart = viewStart - sampleStart;
@@ -994,13 +1029,15 @@ function drawEditor(
   const nPix = Math.max(1, Math.ceil(plotW * dpr));
 
   list.forEach((tr, i) => {
-    const y0 = plotTop + i * laneH;
-    const mid = y0 + laneH / 2;
-    if (i > 0 && displayBand(list[i - 1]!) !== displayBand(tr)) {
-      // Preserve equal lane geometry so annotations and hit-testing remain
-      // aligned, while making the EEG/auxiliary/EKG boundaries unmistakable.
+    const lane = lanes[i] ?? { top: i * laneH, height: laneH };
+    const y0 = plotTop + lane.top;
+    const laneHeight = lane.height;
+    const mid = y0 + laneHeight / 2;
+    if (i > 0 && lane.top > (lanes[i - 1]?.top ?? 0) + (lanes[i - 1]?.height ?? 0)) {
+      // Mark the larger inter-chain spacer so neighboring longitudinal chains
+      // remain visually distinct while annotations stay aligned to each lane.
       ctx.fillStyle = "rgba(232,234,237,0.13)";
-      ctx.fillRect(0, y0, cssW, Math.min(3, laneH));
+      ctx.fillRect(0, y0 - (lane.top - (lanes[i - 1]?.top ?? 0) - (lanes[i - 1]?.height ?? 0)), cssW, lane.top - (lanes[i - 1]?.top ?? 0) - (lanes[i - 1]?.height ?? 0));
     }
     ctx.strokeStyle = "rgba(232,234,237,0.05)";
     ctx.beginPath();
@@ -1009,8 +1046,8 @@ function drawEditor(
     ctx.stroke();
     ctx.strokeStyle = "rgba(232,234,237,0.06)";
     ctx.beginPath();
-    ctx.moveTo(0, y0 + laneH);
-    ctx.lineTo(cssW, y0 + laneH);
+    ctx.moveTo(0, y0 + laneHeight);
+    ctx.lineTo(cssW, y0 + laneHeight);
     ctx.stroke();
 
     if (s.hiddenTrackIds.includes(tr.id)) {
@@ -1018,7 +1055,7 @@ function drawEditor(
       // and group boundary stays at the same vertical position. The gutter's
       // eye button is the one-click restore affordance for this placeholder.
       ctx.fillStyle = "rgba(232,234,237,0.025)";
-      ctx.fillRect(plotX, y0 + 1, plotW, Math.max(1, laneH - 2));
+      ctx.fillRect(plotX, y0 + 1, plotW, Math.max(1, laneHeight - 2));
       ctx.strokeStyle = "rgba(232,234,237,0.16)";
       ctx.setLineDash([3, 4]);
       ctx.beginPath();
@@ -1026,7 +1063,7 @@ function drawEditor(
       ctx.lineTo(plotX + plotW - 8, mid);
       ctx.stroke();
       ctx.setLineDash([]);
-      if (laneH >= 16) {
+      if (laneHeight >= 16) {
         ctx.fillStyle = "#747d89";
         ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
         ctx.textBaseline = "middle";
@@ -1058,7 +1095,7 @@ function drawEditor(
           return Math.max(-profile.clipUv, Math.min(profile.clipUv, centered));
         })
       : raw;
-    const scale = displayScaleForChannel(laneH, s.sensitivityUv, tr.kind, profile);
+    const scale = displayScaleForChannel(laneHeight, s.sensitivityUv, tr.kind, profile);
     const weight = traceWeight(hovered);
     drawLane(
       ctx,
@@ -1119,6 +1156,7 @@ function drawEditorOverlay(
   sampleStart = 0,
   focusedTrackIds: string[] = [],
   hoverCursor: { timeSec: number; trackId: string | null } | null = null,
+  lanes: LaneRect[] = [],
 ) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1141,6 +1179,7 @@ function drawEditorOverlay(
         plotWidth: plotW,
         plotTop: RULER,
         laneHeight,
+        laneRects: lanes,
         laneIds,
         eventRailHeight: EVENT_LANE,
       },
@@ -1191,7 +1230,8 @@ function drawEditorOverlay(
     for (const trackId of focusedTrackIds) {
       const lane = laneIds.indexOf(trackId);
       if (lane < 0) continue;
-      ctx.strokeRect(plotX + 1, RULER + lane * laneHeight + 1, plotW - 2, laneHeight - 2);
+      const rect = lanes[lane] ?? { top: lane * laneHeight, height: laneHeight };
+      ctx.strokeRect(plotX + 1, RULER + rect.top + 1, plotW - 2, Math.max(1, rect.height - 2));
     }
   }
   if (caliper) {
@@ -1243,7 +1283,8 @@ function drawEditorOverlay(
       if (lane >= 0) {
         const laneHeight = Math.max(1, (cssH - RULER) / Math.max(1, laneIds.length));
         ctx.fillStyle = "rgba(126,184,201,0.08)";
-        ctx.fillRect(plotX, RULER + lane * laneHeight, plotW, laneHeight);
+        const rect = lanes[lane] ?? { top: lane * laneHeight, height: laneHeight };
+        ctx.fillRect(plotX, RULER + rect.top, plotW, rect.height);
       }
     }
   }
@@ -1517,11 +1558,13 @@ function TrackGutter({
   previous,
   count,
   compact,
+  lane,
 }: {
   track: ProcessedTrack;
   previous?: ProcessedTrack;
   count: number;
   compact: boolean;
+  lane?: LaneRect;
 }) {
   const st = useEegStore((s) => s.tracks[track.id]) as TrackState | undefined;
   const toggleMute = useEegStore((s) => s.toggleMute);
@@ -1537,12 +1580,12 @@ function TrackGutter({
   return (
     <div
       className={cn(
-        "pointer-events-auto flex items-center gap-0.5 border-b border-border/50 px-1",
+        "pointer-events-auto absolute left-0 right-0 flex items-center gap-0.5 border-b border-border/50 px-1",
         previous && displayBand(previous) !== displayBand(track) && "border-t-2 border-accent/30",
         focused && "bg-accent/8",
         hidden && "opacity-50",
       )}
-      style={{ height: `${100 / count}%` }}
+      style={lane ? { top: lane.top, height: lane.height } : { height: `${100 / count}%` }}
     >
       <span
         className="size-2 shrink-0 rounded-full"

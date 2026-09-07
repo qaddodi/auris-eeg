@@ -15,6 +15,8 @@ export interface AnnotationLayoutOptions {
   /** Top of the first waveform lane, below the time/event rail. */
   plotTop: number;
   laneHeight: number;
+  /** Optional per-lane geometry for grouped displays with inter-chain gaps. */
+  laneRects?: readonly { top: number; height: number }[];
   laneIds: readonly string[];
   /** Height reserved for the event rail above waveform lanes. */
   eventRailHeight?: number;
@@ -38,8 +40,10 @@ function finitePositive(value: number, fallback: number): number {
 }
 
 function laneFor(index: number, options: AnnotationLayoutOptions): AnnotationLane {
-  const top = options.plotTop + index * options.laneHeight;
-  return { trackId: options.laneIds[index]!, top, bottom: top + options.laneHeight };
+  const rect = options.laneRects?.[index];
+  const top = options.plotTop + (rect?.top ?? index * options.laneHeight);
+  const height = rect?.height ?? options.laneHeight;
+  return { trackId: options.laneIds[index]!, top, bottom: top + height };
 }
 
 /** Converts one annotation into a clipped time span and its target waveform lanes. */
