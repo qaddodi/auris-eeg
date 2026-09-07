@@ -91,8 +91,6 @@ export function Transport({
   const download = useEegStore((s) => s.download);
   const evidencePreparation = useEegStore((s) => s.evidencePreparation);
   const evidenceReason = useEegStore((s) => s.evidenceReason);
-  const hiddenTrackIds = useEegStore((s) => s.hiddenTrackIds);
-  const toggleTrackVisibility = useEegStore((s) => s.toggleTrackVisibility);
   const playheadEeg = useEegStore((s) => s.playheadEeg);
   const eegRef = useRef<HTMLSpanElement>(null);
 
@@ -239,20 +237,6 @@ export function Transport({
               <SoundOptions />
             </select>
           </label>
-          <details className="relative shrink-0">
-            <summary className="grid size-8 list-none place-items-center rounded-sm text-muted hover:bg-surface-2 hover:text-fg [&::-webkit-details-marker]:hidden" aria-label="Channel visibility" title="Channel visibility">
-              <Eye aria-hidden="true" />
-            </summary>
-            <div className="absolute right-0 top-9 z-50 w-56 rounded-md border border-border bg-surface p-2 shadow-2xl">
-              <p className="mb-1 px-2 text-[0.625rem] font-semibold uppercase tracking-wide text-subtle">Channel visibility</p>
-              {segment ? <div className="max-h-52 overflow-y-auto">{segment.tracks.filter((track) => track.kind !== "extra").map((track) => {
-                const hidden = hiddenTrackIds.includes(track.id);
-                return <button key={track.id} type="button" onClick={() => toggleTrackVisibility(track.id)} className="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left font-mono text-[0.6875rem] text-muted hover:bg-surface-2 hover:text-fg" aria-pressed={!hidden}>
-                  {hidden ? <EyeOff className="size-3.5" aria-hidden="true" /> : <Eye className="size-3.5" aria-hidden="true" />}<span className="truncate">{track.label}</span>
-                </button>;
-              })}</div> : <p className="px-2 py-2 text-xs text-muted">Open an EDF to manage channels.</p>}
-            </div>
-          </details>
           <Button size="iconSm" variant="ghost" className={actionClass} aria-label="Download WAV" title={!soundActive ? (evidenceReason ?? "Choose a sound mode first") : "Download WAV"} disabled={!segment || !soundActive} onClick={download}>
             <Download aria-hidden="true" />
           </Button>
