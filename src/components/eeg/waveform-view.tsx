@@ -11,7 +11,7 @@ import {
   followViewStart,
   timeAtFraction,
 } from "@/lib/eeg/view";
-import { MORPH_COLOR } from "@/lib/eeg/defaults";
+import { ANNOTATION_TYPES, MORPH_COLOR } from "@/lib/eeg/defaults";
 import { displayScaleForChannel } from "@/lib/eeg/display";
 import { CSS_PX_PER_MM, nominalMmForVoltage } from "@/lib/eeg/display-geometry";
 import { hitTestAnnotations, layoutAnnotations } from "@/lib/eeg/annotation-layout";
@@ -381,6 +381,91 @@ function formatTick(t: number, span: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function formatAnnotationTime(seconds: number): string {
+  const safe = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
+  const minutes = Math.floor(safe / 60);
+  const remainder = (safe - minutes * 60).toFixed(2).padStart(5, "0");
+  return `${minutes}:${remainder}`;
+}
+
+function annotationInlineLabel(annotation: Annotation): string {
+  const type =
+    ANNOTATION_TYPES.find((candidate) => candidate.id === annotation.type)?.label ?? annotation.type;
+  const note = annotation.text.trim().replace(/\s+/g, " ");
+  const timing =
+    annotation.end - annotation.start > 0.02
+      ? `${formatAnnotationTime(annotation.start)} · ${(annotation.end - annotation.start).toFixed(2)} s`
+      : formatAnnotationTime(annotation.start);
+  return `${type}${note ? ` · ${note}` : ""} · ${timing}`;
+}
+
+function drawInlineAnnotationLabel(
+  ctx: CanvasRenderingContext2D,
+  annotation: Annotation,
+  layout: { x0: number; x1: number; lanes: AnnotationLane[]; global: boolean },
+  plotX: number,
+  plotW: number,
+  _viewStart: number,
+  _viewDuration: number,
+  cssW: number,
+  cssH: number,
+) {
+  const text = annotationInlineLabel(annotation);
+  const font = "700 11px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
+  const padX = 7;
+  const padY = 4;
+  const height = 19;
+  const plotRight = plotX + plotW;
+  const maxWidth = Math.max(80, Math.min(330, plotW - 12));
+
+  ctx.save();
+  ctx.font = font;
+  const fullWidth = ctx.measureText(text).width + padX * 2;
+  const labelWidth = Math.min(maxWidth, fullWidth);
+  let labelText = text;
+  if (fullWidth > maxWidth) {
+    const ellipsis = "…";
+    const available = Math.max(12, maxWidth - padX * 2 - ctx.measureText(ellipsis).width);
+    while (labelText.length > 1 && ctx.measureText(labelText).width > available) {
+      labelText = labelText.slice(0, -1);
+    }
+    labelText += ellipsis;
+  }
+
+  // Prefer the right side of the marker, then flip to the left near the edge.
+  // Keep a guard over the channel-name plate so the two labels never obscure
+  // one another at the start of a lane.
+  const leftGuard = plotX + Math.min(104, Math.max(8, plotW - labelWidth));
+  const preferredRight = layout.x1 + 7;
+  const preferredLeft = layout.x0 - labelWidth - 7;
+  let x = preferredRight + labelWidth <= plotRight - 4 ? preferredRight : preferredLeft;
+  x = clamp(x, leftGuard, Math.max(leftGuard, plotRight - labelWidth - 4));
+
+  const lane = layout.lanes[0];
+  const laneTop = lane?.top ?? 0;
+  const laneBottom = lane?.bottom ?? Math.min(cssH, RULER + EVENT_LANE + height + 4);
+  // Put a global event in the first waveform lane; channel-specific events sit
+  // at the top of their lane, keeping the annotation visually tied to its row.
+  let y = layout.global ? RULER + 2 : laneTop + 2;
+  if (y + height > laneBottom - 2) y = Math.max(laneTop + 1, laneBottom - height - 2);
+  y = clamp(y, 1, Math.max(1, cssH - height - 1));
+
+  const color = MORPH_COLOR[annotation.type] ?? "#c8ccd4";
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#11151a";
+  ctx.fillRect(x, y, labelWidth, height);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, Math.max(1, labelWidth - 1), height - 1);
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, 3, height);
+  ctx.fillStyle = "#f1f4f7";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(labelText, x + padX + 2, y + height / 2);
+  ctx.restore();
+}
+
 function niceStep(span: number): number {
   if (span <= 2) return 0.2;
   if (span <= 5) return 0.5;
@@ -404,6 +489,7 @@ export function WaveformView() {
   const overviewWrapRef = useRef<HTMLDivElement>(null);
   const dsaWrapRef = useRef<HTMLDivElement>(null);
   const hoveredTrackRef = useRef<string | null>(null);
+  const hoveredAnnotationRef = useRef<string | null>(null);
   const [lanePlotHeight, setLanePlotHeight] = useState(600);
   const dragRef = useRef<null | {
     kind:
@@ -593,6 +679,7 @@ export function WaveformView() {
             s.focusedTrackIds,
             s.hoverCursor,
             laneLayout(editorList, Math.max(1, cssH - RULER), s.hiddenTrackIds),
+            hoveredAnnotationRef.current,
           );
           if (!editorReady && waveSig !== "waiting-for-display-window") {
             clearWaveformCanvas(ectx, cssW, cssH, dpr);
@@ -860,12 +947,37 @@ export function WaveformView() {
         const frac = clamp((e.clientX - rect.left + (wrapRef.current?.scrollLeft ?? 0) - GUTTER) / plotW, 0, 1);
         const timeSec = timeAtFraction(frac, state.viewStart, state.viewDuration);
         const hover = { timeSec, trackId: next };
+        const laneRects = laneLayout(list, Math.max(1, rect.height - RULER), state.hiddenTrackIds);
+        const annotationCandidates = state.showAnnotations
+          ? state.annotations.filter(
+              (annotation) =>
+                annotation.source !== "auto" || (state.showAuto && annotation.type !== "qrs"),
+            )
+          : [];
+        const annotationId = hitTestAnnotations(
+          annotationCandidates,
+          contentX,
+          e.clientY - rect.top,
+          {
+            viewStart: state.viewStart,
+            viewDuration: state.viewDuration,
+            plotX: GUTTER,
+            plotWidth: plotW,
+            plotTop: RULER,
+            laneHeight: Math.max(1, (rect.height - RULER) / Math.max(1, list.length)),
+            laneRects,
+            laneIds: list.map((track) => track.id),
+            eventRailHeight: EVENT_LANE,
+          },
+        );
         if (
           next !== hoveredTrackRef.current ||
           !state.hoverCursor ||
-          Math.abs(state.hoverCursor.timeSec - timeSec) > 1e-4
+          Math.abs(state.hoverCursor.timeSec - timeSec) > 1e-4 ||
+          annotationId !== hoveredAnnotationRef.current
         ) {
           hoveredTrackRef.current = next;
+          hoveredAnnotationRef.current = annotationId;
           state.setHoverCursor(hover);
           paintRef.current();
         }
@@ -973,8 +1085,13 @@ export function WaveformView() {
   };
 
   const onPointerLeave = () => {
-    if (hoveredTrackRef.current !== null || useEegStore.getState().hoverCursor) {
+    if (
+      hoveredTrackRef.current !== null ||
+      hoveredAnnotationRef.current !== null ||
+      useEegStore.getState().hoverCursor
+    ) {
       hoveredTrackRef.current = null;
+      hoveredAnnotationRef.current = null;
       useEegStore.getState().setHoverCursor(null);
       paintRef.current();
     }
@@ -1326,6 +1443,7 @@ function drawEditorOverlay(
   focusedTrackIds: string[] = [],
   hoverCursor: { timeSec: number; trackId: string | null } | null = null,
   lanes: LaneRect[] = [],
+  hoveredAnnotationId: string | null = null,
 ) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1388,6 +1506,9 @@ function drawEditorOverlay(
       }
       ctx.stroke();
       ctx.setLineDash([]);
+      if (layout.id === hoveredAnnotationId) {
+        drawInlineAnnotationLabel(ctx, annotation, layout, plotX, plotW, viewStart, viewDur, cssW, cssH);
+      }
     }
     ctx.globalAlpha = 1;
   }
