@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { audibleIds } from "@/lib/eeg/pipeline";
 import type { Annotation, ProcessedTrack, TrackState } from "@/lib/eeg/types";
@@ -658,6 +658,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
   const hoveredTrackRef = useRef<string | null>(null);
   const hoveredAnnotationRef = useRef<string | null>(null);
   const [lanePlotHeight, setLanePlotHeight] = useState(600);
+  const [gutterCollapsed, setGutterCollapsed] = useState(false);
   const dragRef = useRef<null | {
     kind:
       | "seek"
@@ -1376,6 +1377,20 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
         >
           <canvas ref={editorRef} className="absolute inset-0 size-full" />
           <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
+          <button
+            type="button"
+            className="pointer-events-auto absolute left-1 top-0 z-30 grid h-[18px] w-5 place-items-center rounded-sm text-subtle hover:bg-surface-2 hover:text-fg"
+            aria-expanded={!gutterCollapsed}
+            aria-label={gutterCollapsed ? "Show channel controls" : "Hide channel controls"}
+            title={gutterCollapsed ? "Show channel controls" : "Hide channel controls"}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              setGutterCollapsed((collapsed) => !collapsed);
+            }}
+          >
+            {gutterCollapsed ? <ChevronRight className="size-3" /> : <ChevronLeft className="size-3" />}
+          </button>
           {list.length > 0 && (
             <div className="pointer-events-none absolute bottom-0 left-0 z-10 w-[112px]" style={{ top: RULER }}>
               {list.map((tr, index) => (
@@ -1387,6 +1402,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
                   previousGroup={index > 0 ? laneGroup(list[index - 1]!, index - 1, list) : undefined}
                   count={list.length}
                   compact={list.length > 16}
+                  collapsed={gutterCollapsed}
                   lane={renderedLanes[index]}
                   theme={effectiveTheme}
                 />
@@ -2031,6 +2047,7 @@ function TrackGutter({
   previousGroup,
   count,
   compact,
+  collapsed,
   lane,
   theme,
 }: {
@@ -2040,6 +2057,7 @@ function TrackGutter({
   previousGroup?: string;
   count: number;
   compact: boolean;
+  collapsed: boolean;
   lane?: LaneRect;
   theme: ResolvedTheme;
 }) {
@@ -2065,20 +2083,22 @@ function TrackGutter({
       )}
       style={{ ...(lane ? { top: lane.top, height: lane.height } : { height: `${100 / count}%` }), borderLeftColor: color }}
     >
-      <button
-        type="button"
-        title={hidden ? "Show channel" : "Hide channel"}
-        aria-label={`${hidden ? "Show" : "Hide"} ${track.label}`}
-        aria-pressed={hidden}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={() => toggleTrackVisibility(track.id)}
-        className={cn(
-          "grid size-5 shrink-0 place-items-center rounded-sm text-subtle hover:bg-surface-2 hover:text-fg",
-          hidden && "bg-surface-2",
-        )}
-      >
-        {hidden ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
-      </button>
+      {!collapsed && (
+        <button
+          type="button"
+          title={hidden ? "Show channel" : "Hide channel"}
+          aria-label={`${hidden ? "Show" : "Hide"} ${track.label}`}
+          aria-pressed={hidden}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => toggleTrackVisibility(track.id)}
+          className={cn(
+            "grid size-5 shrink-0 place-items-center rounded-sm text-subtle hover:bg-surface-2 hover:text-fg",
+            hidden && "bg-surface-2",
+          )}
+        >
+          {hidden ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+        </button>
+      )}
       <span
         className={cn(
           "grid size-5 shrink-0 place-items-center text-[0.5625rem] font-semibold uppercase",
@@ -2091,14 +2111,14 @@ function TrackGutter({
       >
         {lat === "left" ? "L" : lat === "right" ? "R" : lat === "midline" ? "C" : "—"}
       </span>
-      {hidden ? (
+      {collapsed ? null : hidden ? (
         <span className="shrink-0 text-[0.5625rem] font-semibold uppercase tracking-wide text-subtle">Hidden</span>
       ) : (
         <>
           <button
             type="button"
             title="Solo — double-click for exclusive"
-            aria-label={`Solo ${track.label}`}
+            aria-label={`Solo ${track.label}; double-click for exclusive solo`}
             aria-pressed={solo}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => toggleSolo(track.id)}
