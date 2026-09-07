@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { runDeterministicScreeningSync } from "./abnormality/screening.ts";
 
 const fs = 200;
-function channel(id: string, samples: Float32Array, laterality: "left" | "right" | "midline" = "unknown") {
+function channel(id: string, samples: Float32Array, laterality: "left" | "right" | "midline" | "unknown" = "unknown") {
   return { id, label: id, canonical: id, samples, sampleRate: fs, kind: "eeg" as const, isEeg: true, laterality, sources: [id] };
 }
 function tone(frequency: number, seconds: number, amplitude = 20): Float32Array {

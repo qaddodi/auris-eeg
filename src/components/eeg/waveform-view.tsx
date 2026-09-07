@@ -44,8 +44,10 @@ import type { ResolvedTheme } from "./theme";
 const GUTTER_EXPANDED = 88;
 const GUTTER_COLLAPSED = 32;
 const RULER = 18;
-const OVERVIEW_H = 72;
-const DSA_H = 112;
+// Keep the full-record navigator deliberately compact: it is a locator, not a
+// second EEG page.  Individual traces are clipped to their own lanes below.
+const OVERVIEW_H = 84;
+const DSA_H = 128;
 const DSA_LEFT = 34;
 const DSA_RIGHT = 82;
 const DSA_TOP = 14;
@@ -60,6 +62,9 @@ const CHAIN_GAP = 7;
 type CanvasPalette = {
   bg: string;
   ruler: string;
+  overviewBg: string;
+  overviewTrace: string;
+  dsaBg: string;
   text: string;
   muted: string;
   grid: string;
@@ -78,6 +83,9 @@ type CanvasPalette = {
   accent: string;
   overlayFill: string;
   overlayStroke: string;
+  navigatorShade: string;
+  navigatorFill: string;
+  navigatorHandle: string;
   cursor: string;
 };
 
@@ -85,6 +93,9 @@ const CANVAS_PALETTES: Record<ResolvedTheme, CanvasPalette> = {
   dark: {
     bg: "#07080a",
     ruler: "#101216",
+    overviewBg: "#171c23",
+    overviewTrace: "#e1e7ed",
+    dsaBg: "#101922",
     text: "#f1f4f7",
     muted: "#8b919c",
     grid: "rgba(232,234,237,0.06)",
@@ -103,11 +114,17 @@ const CANVAS_PALETTES: Record<ResolvedTheme, CanvasPalette> = {
     accent: "#7eb8c9",
     overlayFill: "rgba(232,234,237,0.06)",
     overlayStroke: "rgba(232,234,237,0.45)",
+    navigatorShade: "rgba(1,4,8,0.45)",
+    navigatorFill: "rgba(126,184,201,0.16)",
+    navigatorHandle: "#a8d9e5",
     cursor: "rgba(232,234,237,0.95)",
   },
   light: {
     bg: "#f8fafb",
     ruler: "#eaf0f3",
+    overviewBg: "#e7eef2",
+    overviewTrace: "#20313c",
+    dsaBg: "#edf4f6",
     text: "#17232c",
     muted: "#5e6d78",
     grid: "rgba(23,35,44,0.11)",
@@ -126,6 +143,9 @@ const CANVAS_PALETTES: Record<ResolvedTheme, CanvasPalette> = {
     accent: "#146b83",
     overlayFill: "rgba(23,35,44,0.08)",
     overlayStroke: "rgba(23,35,44,0.42)",
+    navigatorShade: "rgba(237,244,247,0.38)",
+    navigatorFill: "rgba(20,107,131,0.14)",
+    navigatorHandle: "#075b71",
     cursor: "rgba(23,35,44,0.86)",
   },
 };
@@ -1823,7 +1843,7 @@ function drawOverviewWaves(
   const palette = CANVAS_PALETTES[theme];
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = palette.ruler;
+  ctx.fillStyle = palette.overviewBg;
   ctx.fillRect(0, 0, cssW, cssH);
   if (list.length === 0 || total <= 0) return;
   const nPix = Math.max(1, Math.ceil(cssW * dpr));
@@ -1837,6 +1857,20 @@ function drawOverviewWaves(
     const y0 = 4 + lane.top;
     const rowHeight = lane.height;
     const mid = y0 + rowHeight / 2;
+    const laneInset = Math.min(1.5, Math.max(0.35, rowHeight * 0.16));
+    // Canvas joins can cross a lane boundary even when their endpoints are
+    // clamped.  A per-lane clip makes the compact overview read as distinct
+    // rows at every recording length.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, y0, cssW, rowHeight);
+    ctx.clip();
+    ctx.strokeStyle = palette.laneMid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, mid + 0.5);
+    ctx.lineTo(cssW, mid + 0.5);
+    ctx.stroke();
     if (s.hiddenTrackIds.includes(tr.id)) {
       // Keep the hidden channel in order while collapsing its overview row to
       // the same compact height used by the editor.
@@ -1849,9 +1883,9 @@ function drawOverviewWaves(
       ctx.lineTo(cssW - 4, mid);
       ctx.stroke();
       ctx.setLineDash([]);
+      ctx.restore();
       return;
     }
-    const lat = s.tracks[tr.id]?.lateralityOverride ?? tr.laterality;
     const raw = envelopeTraceWindow(tr.samples, tr.sampleRate, 0, total, nPix);
     const profile = tr.kind === "ekg" ? cachedEkgDisplayProfile(tr.samples) : null;
     const display = profile
@@ -1859,21 +1893,35 @@ function drawOverviewWaves(
           Math.max(-profile.clipUv, Math.min(profile.clipUv, value - profile.baselineUv)),
         )
       : raw;
-    const scale = displayScaleForChannel(rowHeight, s.sensitivityUv, tr.kind, profile);
-    const color = traceColorForLane(laneGroup(tr, i, list), tr.kind, lat, tr.id, theme);
-    if (display.mode !== "envelope") return;
+    // The overview is a compact locator, so its gain is derived from the
+    // record-wide envelope rather than the editor's clinical sensitivity.
+    // This preserves visible activity while reserving headroom in every lane.
+    const magnitudes: number[] = [];
+    const amplitudeStride = Math.max(1, Math.floor(display.min.length / 1024));
+    for (let p = 0; p < display.min.length; p += amplitudeStride) {
+      magnitudes.push(Math.abs(display.min[p]!), Math.abs(display.max[p]!));
+    }
+    magnitudes.sort((a, b) => a - b);
+    const robustAmplitude = magnitudes[Math.floor(Math.max(0, magnitudes.length - 1) * 0.9)] ?? 1;
+    const scale = (rowHeight * 0.24) / Math.max(1e-6, robustAmplitude);
+    const color = palette.overviewTrace;
+    if (display.mode !== "envelope") {
+      ctx.restore();
+      return;
+    }
     // The overview is a navigation aid, not a full-resolution trace. Drawing
     // a min/max bar at every pixel turns dense recordings into a solid block
     // of color, so use a light connected envelope and only a sparse set of
     // whiskers for brief transients.
-    ctx.globalAlpha = 0.42;
-    ctx.lineWidth = 0.8;
+    ctx.globalAlpha = 0.84;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 0.9;
     ctx.lineJoin = "round";
     ctx.lineCap = "butt";
     ctx.beginPath();
     for (let p = 0; p < display.min.length; p++) {
       const x = ((p + 0.5) / display.min.length) * cssW;
-      const y = mid + sign * display.min[p]! * scale;
+      const y = clamp(mid + sign * display.min[p]! * scale, y0 + laneInset, y0 + rowHeight - laneInset);
       if (p === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
@@ -1881,25 +1929,26 @@ function drawOverviewWaves(
     ctx.beginPath();
     for (let p = 0; p < display.max.length; p++) {
       const x = ((p + 0.5) / display.max.length) * cssW;
-      const y = mid + sign * display.max[p]! * scale;
+      const y = clamp(mid + sign * display.max[p]! * scale, y0 + laneInset, y0 + rowHeight - laneInset);
       if (p === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
 
-    ctx.globalAlpha = 0.18;
+    ctx.globalAlpha = 0.22;
     ctx.lineWidth = 0.7;
     ctx.beginPath();
     const whiskerStride = Math.max(1, Math.ceil(display.min.length / Math.max(1, cssW / 4)));
     for (let p = 0; p < display.min.length; p += whiskerStride) {
       const x = ((p + 0.5) / display.min.length) * cssW;
-      ctx.moveTo(x, mid + sign * display.min[p]! * scale);
-      ctx.lineTo(x, mid + sign * display.max[p]! * scale);
+      ctx.moveTo(x, clamp(mid + sign * display.min[p]! * scale, y0 + laneInset, y0 + rowHeight - laneInset));
+      ctx.lineTo(x, clamp(mid + sign * display.max[p]! * scale, y0 + laneInset, y0 + rowHeight - laneInset));
     }
     ctx.stroke();
     ctx.globalAlpha = 1;
+    ctx.restore();
   });
-  ctx.fillStyle = palette.muted;
+  ctx.fillStyle = palette.text;
   ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
   ctx.textBaseline = "bottom";
   const step = niceStep(total);
@@ -1935,19 +1984,25 @@ function drawOverviewOverlay(
       ctx.fillRect(x, 0, 2, cssH);
     }
   }
-  const x0 = (viewStart / total) * cssW;
-  const x1 = ((viewStart + viewDur) / total) * cssW;
-  ctx.fillStyle = palette.overlayFill;
-  ctx.fillRect(x0, 0, Math.max(2, x1 - x0), cssH);
-  ctx.strokeStyle = palette.accent;
-  ctx.lineWidth = 1.25;
-  ctx.strokeRect(x0 + 0.5, 0.5, Math.max(2, x1 - x0 - 1), cssH - 1);
-  ctx.fillStyle = palette.accent;
-  ctx.fillRect(x0 - 1, 0, 3, cssH);
-  ctx.fillRect(x1 - 2, 0, 3, cssH);
+  const x0 = clamp((viewStart / total) * cssW, 0, cssW);
+  const x1 = clamp(((viewStart + viewDur) / total) * cssW, 0, cssW);
+  const width = Math.max(8, x1 - x0);
+  // Shade the unselected recording, not the selected window. This makes the
+  // current page read like a durable navigator control in both themes.
+  ctx.fillStyle = palette.navigatorShade;
+  ctx.fillRect(0, 0, x0, cssH);
+  ctx.fillRect(Math.min(cssW, x0 + width), 0, Math.max(0, cssW - x0 - width), cssH);
+  ctx.fillStyle = palette.navigatorFill;
+  ctx.fillRect(x0, 0, width, cssH);
+  ctx.strokeStyle = palette.navigatorHandle;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x0 + 1, 1, Math.max(4, width - 2), cssH - 2);
+  ctx.fillStyle = palette.navigatorHandle;
+  ctx.fillRect(x0 - 2, 0, 5, cssH);
+  ctx.fillRect(x0 + width - 3, 0, 5, cssH);
 
   ctx.strokeStyle = palette.cursor;
-  ctx.lineWidth = 1.25;
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
   const px = (t / total) * cssW;
   ctx.moveTo(px, 0);
@@ -1966,7 +2021,7 @@ function drawDsa(
   const palette = CANVAS_PALETTES[theme];
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = palette.bg;
+  ctx.fillStyle = palette.dsaBg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (!frame || frame.nTime < 1 || frame.nFreq < 2) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1993,7 +2048,7 @@ function drawDsa(
         fBin = Math.min(frame.nFreq - 1, Math.floor(u * (frame.nFreq - 1)));
       }
       const p = src[ti * frame.nFreq + fBin] ?? 0;
-      const [r, g, b] = dsaRgb(dsaUnit(p, frame.dbMin, frame.dbMax));
+      const [r, g, b] = dsaRgb(dsaUnit(p, frame.dbMin, frame.dbMax), theme);
       const i = (y * plotW + x) * 4;
       data[i] = r;
       data[i + 1] = g;
@@ -2029,12 +2084,12 @@ function drawDsa(
   const legendW = Math.max(16, DSA_RIGHT - 20);
   const gradient = ctx.createLinearGradient(legendX, 0, legendX + legendW, 0);
   for (let i = 0; i <= 10; i++) {
-    const [r, g, b] = dsaRgb(i / 10);
+    const [r, g, b] = dsaRgb(i / 10, theme);
     gradient.addColorStop(i / 10, `rgb(${r} ${g} ${b})`);
   }
   ctx.fillStyle = gradient;
-  ctx.fillRect(legendX, legendY, legendW, 5);
-  ctx.fillStyle = palette.muted;
+  ctx.fillRect(legendX, legendY, legendW, 7);
+  ctx.fillStyle = palette.text;
   ctx.textBaseline = "top";
   ctx.fillText(`${Math.round(frame.dbMax)} dB`, legendX, legendY + 8);
   ctx.textAlign = "right";
@@ -2070,11 +2125,18 @@ function drawDsaOverlay(
   const x1 = plotX(viewStart + viewDur);
   const plotTop = DSA_TOP;
   const plotH = Math.max(1, cssH - DSA_TOP - DSA_BOTTOM);
-  ctx.fillStyle = palette.overlayFill;
-  ctx.fillRect(x0, plotTop, Math.max(2, x1 - x0), plotH);
-  ctx.strokeStyle = palette.overlayStroke;
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x0 + 0.5, plotTop + 0.5, Math.max(2, x1 - x0 - 1), plotH - 1);
+  const width = Math.max(8, x1 - x0);
+  ctx.fillStyle = palette.navigatorShade;
+  ctx.fillRect(DSA_LEFT, plotTop, Math.max(0, x0 - DSA_LEFT), plotH);
+  ctx.fillRect(Math.min(cssW - DSA_RIGHT, x0 + width), plotTop, Math.max(0, cssW - DSA_RIGHT - x0 - width), plotH);
+  ctx.fillStyle = palette.navigatorFill;
+  ctx.fillRect(x0, plotTop, width, plotH);
+  ctx.strokeStyle = palette.navigatorHandle;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x0 + 1, plotTop + 1, Math.max(4, width - 2), plotH - 2);
+  ctx.fillStyle = palette.navigatorHandle;
+  ctx.fillRect(x0 - 2, plotTop, 5, plotH);
+  ctx.fillRect(x0 + width - 3, plotTop, 5, plotH);
   ctx.strokeStyle = palette.cursor;
   ctx.lineWidth = 1.25;
   ctx.beginPath();

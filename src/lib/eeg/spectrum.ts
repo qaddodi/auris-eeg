@@ -437,16 +437,24 @@ export function peakBand(p: BandPowers): BandName {
   return entries[0]![0];
 }
 
-/** Perceptually uniform, color-vision-friendly viridis-style DSA ramp. */
-export function dsaRgb(u: number): [number, number, number] {
+/** Theme-aware, color-vision-friendly DSA ramp with a non-black low end. */
+export function dsaRgb(u: number, theme: "dark" | "light" = "dark"): [number, number, number] {
   const x = Math.max(0, Math.min(1, u));
-  const stops: [number, number, number, number][] = [
-    [0, 68, 1, 84],
-    [0.25, 59, 82, 139],
-    [0.5, 33, 145, 140],
-    [0.75, 94, 201, 98],
-    [1, 253, 231, 37],
-  ];
+  const stops: [number, number, number, number][] = theme === "dark"
+    ? [
+      [0, 22, 36, 50],
+      [0.25, 28, 78, 102],
+      [0.5, 35, 130, 143],
+      [0.75, 84, 193, 177],
+      [1, 246, 202, 99],
+    ]
+    : [
+      [0, 238, 245, 247],
+      [0.25, 166, 211, 217],
+      [0.5, 84, 166, 180],
+      [0.75, 28, 108, 132],
+      [1, 196, 91, 37],
+    ];
   for (let i = 1; i < stops.length; i++) {
     const a = stops[i - 1]!;
     const b = stops[i]!;
