@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { audibleIds } from "@/lib/eeg/pipeline";
@@ -29,7 +29,10 @@ import { stableTraceColor } from "@/lib/eeg/colors";
 import { dsaRgb, dsaUnit, type DsaFrame } from "@/lib/eeg/spectrum";
 import { eegNow, useEegStore } from "@/store/eeg-store";
 
-const GUTTER = 132;
+// Leave enough room for the eye/solo/mute controls and a full derivation name.
+// This width is shared by canvas plotting, overlays, hit testing, and the
+// React gutter so labels and traces never drift apart.
+const GUTTER = 232;
 const RULER = 18;
 const OVERVIEW_H = 72;
 const DSA_H = 112;
@@ -42,6 +45,10 @@ const EVENT_LANE = 18;
 // the compact gutter affordance. The remaining plot height is redistributed
 // across visible channels by laneLayout.
 const HIDDEN_LANE_HEIGHT = 26;
+const MIN_VISIBLE_LANE_HEIGHT = 28;
+const TARGET_VISIBLE_LANE_HEIGHT = 44;
+const MAX_VISIBLE_LANE_HEIGHT = 62;
+const CHAIN_GAP = 11;
 
 /** Keep the montage's related derivations together without hiding any valid
  * clinical channels. Auxiliary channels form a separate visual band and EKG
@@ -105,9 +112,10 @@ function laneLayout(
         : total,
     0,
   );
-  // Preserve usable trace height even in compact views while making clinical
-  // chain boundaries visibly larger than ordinary lane separators.
-  const gap = boundaries > 0 ? Math.min(10, Math.max(3, plotHeight / (count * 8))) : 0;
+  // Use a stable clinical row metric instead of stretching a handful of lanes
+  // to fill the viewport. Rows stay readable in short views, and chain gaps
+  // remain obvious at every recording density.
+  const gap = boundaries > 0 ? CHAIN_GAP : 0;
   const available = Math.max(1, plotHeight - boundaries * gap);
   const hiddenCount = list.reduce((total, track) => total + (hidden.has(track.id) ? 1 : 0), 0);
   const visibleCount = count - hiddenCount;
@@ -121,10 +129,19 @@ function laneLayout(
           Math.max(1, (available - visibleCount) / hiddenCount),
         )
       : 0;
-  const visibleHeight =
-    visibleCount > 0
-      ? Math.max(1, (available - hiddenCount * hiddenHeight) / visibleCount)
-      : 0;
+  const visibleHeight = visibleCount > 0
+    ? (() => {
+        const raw = (available - hiddenCount * hiddenHeight) / visibleCount;
+        // If the viewport is dense, use all available height so every lane
+        // remains hit-testable. Otherwise cap the row height to avoid a sparse
+        // recording becoming a set of comically tall traces.
+        return raw < MIN_VISIBLE_LANE_HEIGHT
+          ? Math.max(1, raw)
+          : raw >= TARGET_VISIBLE_LANE_HEIGHT
+            ? Math.min(MAX_VISIBLE_LANE_HEIGHT, raw)
+            : raw;
+      })()
+    : 0;
   let top = 0;
   return list.map((track, index) => {
     const height = hidden.has(track.id) ? hiddenHeight : visibleHeight;
@@ -290,6 +307,7 @@ export function WaveformView() {
   const overviewWrapRef = useRef<HTMLDivElement>(null);
   const dsaWrapRef = useRef<HTMLDivElement>(null);
   const hoveredTrackRef = useRef<string | null>(null);
+  const [lanePlotHeight, setLanePlotHeight] = useState(600);
   const dragRef = useRef<null | {
     kind:
       | "seek"
@@ -314,6 +332,19 @@ export function WaveformView() {
   }>(null);
   const caliperRef = useRef<{ a: number; b: number; trackId: string | null } | null>(null);
   const paintRef = useRef<() => void>(() => {});
+
+  // Keep the React gutter's lane rectangles in lockstep with the canvas after
+  // a resize. The drawing and hit-testing paths calculate the same geometry
+  // from the live surface height.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const update = () => setLanePlotHeight(Math.max(1, wrap.clientHeight - RULER));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, []);
 
   const segment = useEegStore((s) => s.segment);
   const displaySegment = useEegStore((s) => s.displaySegment);
@@ -895,7 +926,7 @@ export function WaveformView() {
   const hiddenTrackIds = useEegStore((s) => s.hiddenTrackIds);
   const renderedLanes = laneLayout(
     list,
-    Math.max(1, (wrapRef.current?.clientHeight ?? 600) - RULER),
+    lanePlotHeight,
     hiddenTrackIds,
   );
 
@@ -963,14 +994,16 @@ export function WaveformView() {
           <canvas ref={editorRef} className="absolute inset-0 size-full" />
           <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
           {list.length > 0 && (
-            <div className="pointer-events-none absolute bottom-0 left-0 z-10 w-[132px]" style={{ top: RULER }}>
+            <div className="pointer-events-none absolute bottom-0 left-0 z-10 w-[232px]" style={{ top: RULER }}>
               {list.map((tr, index) => (
                 <TrackGutter
                   key={tr.id}
                   track={tr}
                   previous={list[index - 1]}
+                  group={laneGroup(tr, index, list)}
+                  previousGroup={index > 0 ? laneGroup(list[index - 1]!, index - 1, list) : undefined}
                   count={list.length}
-                  compact={list.length > 12}
+                  compact={list.length > 16}
                   lane={renderedLanes[index]}
                 />
               ))}
@@ -1598,12 +1631,16 @@ function drawDsaOverlay(
 function TrackGutter({
   track,
   previous,
+  group,
+  previousGroup,
   count,
   compact,
   lane,
 }: {
   track: ProcessedTrack;
   previous?: ProcessedTrack;
+  group: string;
+  previousGroup?: string;
   count: number;
   compact: boolean;
   lane?: LaneRect;
@@ -1617,13 +1654,15 @@ function TrackGutter({
   const toggleTrackVisibility = useEegStore((s) => s.toggleTrackVisibility);
   const focused = useEegStore((s) => s.focusedTrackIds.length === 0 || s.focusedTrackIds.includes(track.id));
   const lat = st?.lateralityOverride ?? track.laterality;
+  const color = stableTraceColor(track.id, track.kind, lat);
   const muted = Boolean(st?.mute);
   const solo = Boolean(st?.solo);
   return (
     <div
       className={cn(
-        "pointer-events-auto absolute left-0 right-0 flex items-center gap-0.5 border-b border-border/50 px-1",
+        "pointer-events-auto absolute left-0 right-0 flex items-center gap-1 border-b border-border/50 px-1.5",
         previous && displayBand(previous) !== displayBand(track) && "border-t-2 border-accent/30",
+        previousGroup && previousGroup !== group && displayBand(previous!) === displayBand(track) && "border-t border-accent/35",
         focused && "bg-accent/8",
         hidden && "opacity-50",
       )}
@@ -1631,7 +1670,7 @@ function TrackGutter({
     >
       <span
         className="size-2 shrink-0 rounded-full"
-        style={{ background: stableTraceColor(track.id, track.kind, lat) }}
+        style={{ background: color }}
         aria-hidden="true"
       />
       <button
@@ -1649,9 +1688,9 @@ function TrackGutter({
         {hidden ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
       </button>
       {hidden ? (
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-1">
-            <span className="truncate font-mono text-[0.625rem] leading-tight text-muted">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-1">
+            <span className="whitespace-nowrap font-mono text-[0.7rem] font-semibold leading-tight tracking-tight text-fg" style={{ color }} title={track.label}>
               {track.label}
             </span>
             <span className="shrink-0 text-[0.5625rem] uppercase tracking-wide text-subtle">Hidden</span>
@@ -1684,7 +1723,7 @@ function TrackGutter({
           </button>
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline justify-between gap-1">
-              <span className="truncate font-mono text-[0.625rem] leading-tight text-fg">
+              <span className="whitespace-nowrap font-mono text-[0.72rem] font-semibold leading-tight tracking-tight text-fg" style={{ color }} title={track.label}>
                 {track.label}
               </span>
               <span
