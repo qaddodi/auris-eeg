@@ -37,10 +37,11 @@ import { dsaRgb, dsaUnit, type DsaFrame } from "@/lib/eeg/spectrum";
 import { eegNow, useEegStore } from "@/store/eeg-store";
 import type { ResolvedTheme } from "./theme";
 
-// The gutter is deliberately only a utility strip. Channel names are drawn at
-// the left edge of each waveform lane (see drawLaneLabel), where they remain
-// readable without competing with the eye/solo/mute controls.
-const GUTTER = 112;
+// Keep the utility strip compact while leaving enough room for the four
+// expanded controls. Collapsed mode is intentionally narrow so the traces
+// reclaim the space rather than merely hiding the controls in place.
+const GUTTER_EXPANDED = 88;
+const GUTTER_COLLAPSED = 32;
 const RULER = 18;
 const OVERVIEW_H = 72;
 const DSA_H = 112;
@@ -659,6 +660,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
   const hoveredAnnotationRef = useRef<string | null>(null);
   const [lanePlotHeight, setLanePlotHeight] = useState(600);
   const [gutterCollapsed, setGutterCollapsed] = useState(false);
+  const gutterWidth = gutterCollapsed ? GUTTER_COLLAPSED : GUTTER_EXPANDED;
   const dragRef = useRef<null | {
     kind:
       | "seek"
@@ -827,6 +829,8 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
               viewEnd,
               displayStart,
               hoveredTrackRef.current,
+              gutterWidth,
+              gutterCollapsed,
               effectiveTheme,
             );
           }
@@ -848,6 +852,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
             s.hoverCursor,
             laneLayout(editorList, Math.max(1, cssH - RULER), s.hiddenTrackIds),
             hoveredAnnotationRef.current,
+            gutterWidth,
             effectiveTheme,
           );
           if (!editorReady && waveSig !== "waiting-for-display-window") {
@@ -951,16 +956,32 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
       unsub();
       ro.disconnect();
     };
-  }, [effectiveTheme]);
+  }, [effectiveTheme, gutterWidth, gutterCollapsed]);
+
+  const onRulerPointer = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!segment || !wrapRef.current || !surfaceRef.current) return;
+    const rect = wrapRef.current.getBoundingClientRect();
+    const plotW = Math.max(1, surfaceRef.current.clientWidth - gutterWidth);
+    const x = e.clientX - rect.left + wrapRef.current.scrollLeft - gutterWidth;
+    const frac = clamp(x / plotW, 0, 1);
+    const s = useEegStore.getState();
+    if (s.followPlayhead) s.setFollow(false);
+    const latest = useEegStore.getState();
+    const t = timeAtFraction(frac, latest.viewStart, latest.viewDuration);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    seekEeg(t, "user");
+    dragRef.current = { kind: "scrub", x0: e.clientX, start0: latest.viewStart, dur0: latest.viewDuration };
+    if (latest.audibleScrub) playback.scrubAt(t, 0);
+  };
 
   const onEditorPointer = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!segment || !wrapRef.current) return;
     const rect = wrapRef.current.getBoundingClientRect();
     const surface = surfaceRef.current;
     if (!surface) return;
-    const plotW = surface.clientWidth - GUTTER;
+    const plotW = surface.clientWidth - gutterWidth;
     const contentX = e.clientX - rect.left + wrapRef.current.scrollLeft;
-    const x = contentX - GUTTER;
+    const x = contentX - gutterWidth;
     if (x < 0) return;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     const s = useEegStore.getState();
@@ -991,7 +1012,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
       {
         viewStart: vs,
         viewDuration: latest.viewDuration,
-        plotX: GUTTER,
+        plotX: gutterWidth,
         plotWidth: plotW,
         plotTop: RULER,
         laneHeight: laneH,
@@ -1105,8 +1126,8 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
         ),
       );
       const contentX = rect ? e.clientX - rect.left + (wrapRef.current?.scrollLeft ?? 0) : 0;
-      if (rect && contentX >= GUTTER && list.length > 0) {
-        const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - GUTTER);
+      if (rect && contentX >= gutterWidth && list.length > 0 && e.clientY - rect.top >= RULER) {
+        const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - gutterWidth);
         const lane = laneAtY(
           list,
           Math.max(1, rect.height - RULER),
@@ -1114,7 +1135,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
           state.hiddenTrackIds,
         );
         const next = list[lane]?.id ?? null;
-        const frac = clamp((e.clientX - rect.left + (wrapRef.current?.scrollLeft ?? 0) - GUTTER) / plotW, 0, 1);
+        const frac = clamp((e.clientX - rect.left + (wrapRef.current?.scrollLeft ?? 0) - gutterWidth) / plotW, 0, 1);
         const timeSec = timeAtFraction(frac, state.viewStart, state.viewDuration);
         const hover = { timeSec, trackId: next };
         const laneRects = laneLayout(list, Math.max(1, rect.height - RULER), state.hiddenTrackIds);
@@ -1131,7 +1152,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
           {
             viewStart: state.viewStart,
             viewDuration: state.viewDuration,
-            plotX: GUTTER,
+            plotX: gutterWidth,
             plotWidth: plotW,
             plotTop: RULER,
             laneHeight: Math.max(1, (rect.height - RULER) / Math.max(1, list.length)),
@@ -1157,8 +1178,8 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
     const s = useEegStore.getState();
     if (drag.kind === "caliper" && wrapRef.current) {
       const rect = wrapRef.current.getBoundingClientRect();
-      const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - GUTTER);
-      const x = e.clientX - rect.left + wrapRef.current.scrollLeft - GUTTER;
+      const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - gutterWidth);
+      const x = e.clientX - rect.left + wrapRef.current.scrollLeft - gutterWidth;
       const frac = clamp(x / plotW, 0, 1);
       const follow = s.followPlayhead && playback.playing;
       const vs = follow
@@ -1174,8 +1195,8 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
     }
     if (drag.kind === "scrub" && wrapRef.current) {
       const rect = wrapRef.current.getBoundingClientRect();
-      const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - GUTTER);
-      const x = e.clientX - rect.left + wrapRef.current.scrollLeft - GUTTER;
+      const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - gutterWidth);
+      const x = e.clientX - rect.left + wrapRef.current.scrollLeft - gutterWidth;
       const frac = clamp(x / plotW, 0, 1);
       const follow = s.followPlayhead && playback.playing;
       const vs = follow
@@ -1196,7 +1217,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
         drag.moved = true;
       }
       const rect = wrapRef.current.getBoundingClientRect();
-      const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - GUTTER);
+      const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - gutterWidth);
       // Content follows the pointer: dragging right reveals earlier time.
       const dt = ((e.clientX - drag.x0) / plotW) * drag.dur0;
       setView(drag.start0 - dt, drag.dur0);
@@ -1287,12 +1308,12 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
         return;
       }
       const rect = wrap.getBoundingClientRect();
-      const x = e.clientX - rect.left + wrap.scrollLeft - GUTTER;
+      const x = e.clientX - rect.left + wrap.scrollLeft - gutterWidth;
       const follow = s.followPlayhead && playback.playing;
       const vs = follow
         ? followViewStart(eegNow(s), s.viewDuration, s.segment!.duration)
         : s.viewStart;
-      const frac = clamp(x / Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - GUTTER), 0, 1);
+      const frac = clamp(x / Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - gutterWidth), 0, 1);
       const anchor = s.followPlayhead ? eegNow(s) : timeAtFraction(frac, vs, s.viewDuration);
       const factor = e.deltaY > 0 ? 1.12 : 1 / 1.12;
       zoomAt(factor, anchor);
@@ -1379,7 +1400,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
           <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
           <button
             type="button"
-            className="pointer-events-auto absolute left-1 top-0 z-30 grid h-[18px] w-5 place-items-center rounded-sm text-subtle hover:bg-surface-2 hover:text-fg"
+            className="pointer-events-auto absolute left-1 top-0 z-30 grid h-[18px] w-6 place-items-center rounded-sm text-subtle hover:bg-surface-2 hover:text-fg"
             aria-expanded={!gutterCollapsed}
             aria-label={gutterCollapsed ? "Show channel controls" : "Hide channel controls"}
             title={gutterCollapsed ? "Show channel controls" : "Hide channel controls"}
@@ -1391,8 +1412,26 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
           >
             {gutterCollapsed ? <ChevronRight className="size-3" /> : <ChevronLeft className="size-3" />}
           </button>
+          <div
+            className="pointer-events-auto absolute right-0 top-0 z-20 h-[18px] cursor-ew-resize"
+            style={{ left: gutterWidth }}
+            aria-label="Seek timeline"
+            role="slider"
+            aria-valuemin={0}
+            aria-valuemax={segment?.duration ?? 0}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              onRulerPointer(event);
+            }}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+          />
           {list.length > 0 && (
-            <div className="pointer-events-none absolute bottom-0 left-0 z-10 w-[112px]" style={{ top: RULER }}>
+            <div
+              className="pointer-events-none absolute bottom-0 left-0 z-10"
+              style={{ top: RULER, width: gutterWidth }}
+            >
               {list.map((tr, index) => (
                 <TrackGutter
                   key={tr.id}
@@ -1400,8 +1439,6 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
                   previous={list[index - 1]}
                   group={laneGroup(tr, index, list)}
                   previousGroup={index > 0 ? laneGroup(list[index - 1]!, index - 1, list) : undefined}
-                  count={list.length}
-                  compact={list.length > 16}
                   collapsed={gutterCollapsed}
                   lane={renderedLanes[index]}
                   theme={effectiveTheme}
@@ -1439,6 +1476,8 @@ function drawEditor(
   viewEnd: number,
   sampleStart: number,
   hoveredTrackId: string | null,
+  gutterWidth: number,
+  collapsed = false,
   theme: ResolvedTheme = "dark",
 ) {
   const palette = CANVAS_PALETTES[theme];
@@ -1455,8 +1494,8 @@ function drawEditor(
   ctx.fillStyle = palette.bg;
   ctx.fillRect(0, 0, cssW, cssH);
 
-  const plotX = GUTTER;
-  const plotW = Math.max(10, cssW - GUTTER);
+  const plotX = gutterWidth;
+  const plotW = Math.max(10, cssW - gutterWidth);
   const plotTop = RULER;
   const plotH = Math.max(10, cssH - RULER);
   const n = Math.max(1, list.length);
@@ -1582,7 +1621,9 @@ function drawEditor(
     // The label is part of the lane, not part of the utility gutter. It is
     // deliberately painted after the trace to provide a clean, stable name
     // plate at the start of every waveform.
-    drawLaneLabel(ctx, tr.label, plotX + 8, mid, laneHeight, color, false, theme);
+    if (!collapsed) {
+      drawLaneLabel(ctx, tr.label, plotX + 8, mid, laneHeight, color, false, theme);
+    }
   });
 
 }
@@ -1605,14 +1646,15 @@ function drawEditorOverlay(
   hoverCursor: { timeSec: number; trackId: string | null } | null = null,
   lanes: LaneRect[] = [],
   hoveredAnnotationId: string | null = null,
+  gutterWidth: number = GUTTER_EXPANDED,
   theme: ResolvedTheme = "dark",
 ) {
   const palette = CANVAS_PALETTES[theme];
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
-  const plotX = GUTTER;
-  const plotW = Math.max(10, cssW - GUTTER);
+  const plotX = gutterWidth;
+  const plotW = Math.max(10, cssW - gutterWidth);
   const viewEnd = viewStart + viewDur;
   if (showAnnotations) {
     const visible = annotations.filter(
@@ -2045,8 +2087,6 @@ function TrackGutter({
   previous,
   group,
   previousGroup,
-  count,
-  compact,
   collapsed,
   lane,
   theme,
@@ -2055,8 +2095,6 @@ function TrackGutter({
   previous?: ProcessedTrack;
   group: string;
   previousGroup?: string;
-  count: number;
-  compact: boolean;
   collapsed: boolean;
   lane?: LaneRect;
   theme: ResolvedTheme;
@@ -2065,7 +2103,6 @@ function TrackGutter({
   const toggleMute = useEegStore((s) => s.toggleMute);
   const toggleSolo = useEegStore((s) => s.toggleSolo);
   const soloExclusive = useEegStore((s) => s.soloExclusive);
-  const setGain = useEegStore((s) => s.setGain);
   const hidden = useEegStore((s) => s.hiddenTrackIds.includes(track.id));
   const toggleTrackVisibility = useEegStore((s) => s.toggleTrackVisibility);
   const lat = st?.lateralityOverride ?? track.laterality;
@@ -2075,15 +2112,15 @@ function TrackGutter({
   return (
     <div
       className={cn(
-        "pointer-events-auto absolute left-0 right-0 flex items-center gap-1 overflow-hidden border-b border-border/50 px-1.5",
+        "pointer-events-auto absolute left-0 right-0 flex items-center gap-0.5 overflow-hidden border-b border-border/50 px-1",
         previous && displayBand(previous) !== displayBand(track) && "border-t-2 border-accent/30",
         previousGroup && previousGroup !== group && displayBand(previous!) === displayBand(track) && "border-t border-accent/35",
         hidden && "opacity-50",
         "border-l-2",
       )}
-      style={{ ...(lane ? { top: lane.top, height: lane.height } : { height: `${100 / count}%` }), borderLeftColor: color }}
+      style={{ ...(lane ? { top: lane.top, height: lane.height } : { top: 0, height: 0 }), borderLeftColor: color }}
     >
-      {!collapsed && (
+      {!collapsed && <>
         <button
           type="button"
           title={hidden ? "Show channel" : "Hide channel"}
@@ -2092,16 +2129,57 @@ function TrackGutter({
           onPointerDown={(event) => event.stopPropagation()}
           onClick={() => toggleTrackVisibility(track.id)}
           className={cn(
-            "grid size-5 shrink-0 place-items-center rounded-sm text-subtle hover:bg-surface-2 hover:text-fg",
+            "grid size-[18px] shrink-0 place-items-center rounded-sm text-subtle hover:bg-surface-2 hover:text-fg",
             hidden && "bg-surface-2",
           )}
         >
           {hidden ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
         </button>
-      )}
-      <span
+        <span
+          className={cn(
+            "grid size-[18px] shrink-0 place-items-center text-[0.5625rem] font-semibold uppercase",
+            lat === "left" && "text-hemi-l",
+            lat === "right" && "text-hemi-r",
+            lat === "midline" && "text-hemi-c",
+            lat === "unknown" && "text-subtle",
+          )}
+          aria-label={`Laterality ${lat}`}
+        >
+          {lat === "left" ? "L" : lat === "right" ? "R" : lat === "midline" ? "C" : "—"}
+        </span>
+        <button
+          type="button"
+          title="Solo — double-click for exclusive"
+          aria-label={`Solo ${track.label}; double-click for exclusive solo`}
+          aria-pressed={solo}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => toggleSolo(track.id)}
+          onDoubleClick={() => soloExclusive(track.id)}
+          className={cn(
+            "grid size-[18px] shrink-0 place-items-center rounded-sm text-[0.625rem] font-bold",
+            solo ? "bg-ok text-bg" : "bg-surface-2 text-subtle hover:text-fg",
+          )}
+        >
+          S
+        </button>
+        <button
+          type="button"
+          title={muted ? "Unmute" : "Mute"}
+          aria-label={`${muted ? "Unmute" : "Mute"} ${track.label}`}
+          aria-pressed={muted}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => toggleMute(track.id)}
+          className={cn(
+            "grid size-[18px] shrink-0 place-items-center rounded-sm text-[0.625rem] font-bold",
+            muted ? "bg-danger text-bg" : "bg-surface-2 text-subtle hover:text-fg",
+          )}
+        >
+          M
+        </button>
+      </>}
+      {collapsed && <span
         className={cn(
-          "grid size-5 shrink-0 place-items-center text-[0.5625rem] font-semibold uppercase",
+          "grid min-w-0 flex-1 place-items-center text-[0.5625rem] font-semibold uppercase",
           lat === "left" && "text-hemi-l",
           lat === "right" && "text-hemi-r",
           lat === "midline" && "text-hemi-c",
@@ -2110,54 +2188,7 @@ function TrackGutter({
         aria-label={`Laterality ${lat}`}
       >
         {lat === "left" ? "L" : lat === "right" ? "R" : lat === "midline" ? "C" : "—"}
-      </span>
-      {collapsed ? null : hidden ? (
-        <span className="shrink-0 text-[0.5625rem] font-semibold uppercase tracking-wide text-subtle">Hidden</span>
-      ) : (
-        <>
-          <button
-            type="button"
-            title="Solo — double-click for exclusive"
-            aria-label={`Solo ${track.label}; double-click for exclusive solo`}
-            aria-pressed={solo}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => toggleSolo(track.id)}
-            onDoubleClick={() => soloExclusive(track.id)}
-            className={cn(
-              "grid size-5 shrink-0 place-items-center rounded-sm text-[0.625rem] font-bold",
-              solo ? "bg-ok text-bg" : "bg-surface-2 text-subtle hover:text-fg",
-            )}
-          >
-            S
-          </button>
-          <button
-            type="button"
-            title={muted ? "Unmute" : "Mute"}
-            aria-label={`${muted ? "Unmute" : "Mute"} ${track.label}`}
-            aria-pressed={muted}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => toggleMute(track.id)}
-            className={cn(
-              "grid size-5 shrink-0 place-items-center rounded-sm text-[0.625rem] font-bold",
-              muted ? "bg-danger text-bg" : "bg-surface-2 text-subtle hover:text-fg",
-            )}
-          >
-            M
-          </button>
-          {!compact && (
-            <input
-              type="range"
-              min={0}
-              max={2}
-              step={0.05}
-              value={typeof st?.gain === "number" ? st.gain : 1}
-              onChange={(e) => setGain(track.id, Number(e.target.value))}
-              className="h-1 min-w-10 flex-1 cursor-pointer accent-accent"
-              aria-label={`${track.label} gain`}
-            />
-          )}
-        </>
-      )}
+      </span>}
     </div>
   );
 }
