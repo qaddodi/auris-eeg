@@ -814,7 +814,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
             width: cssW,
             height: cssH,
             dpr,
-            trackStateKey: `${effectiveTheme}|rev:${s.displayRevision}|` + Object.values(s.tracks)
+            trackStateKey: `${effectiveTheme}|gutter:${gutterWidth}|rev:${s.displayRevision}|` + Object.values(s.tracks)
               .map((tr) => `${tr.id}:${tr.mute ? 1 : 0}${tr.solo ? 1 : 0}`)
               .join(",") + `|hidden:${s.hiddenTrackIds.join(",")}`,
           });
@@ -831,7 +831,6 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
               displayStart,
               hoveredTrackRef.current,
               gutterWidth,
-              gutterCollapsed,
               effectiveTheme,
             );
           }
@@ -1478,7 +1477,6 @@ function drawEditor(
   sampleStart: number,
   hoveredTrackId: string | null,
   gutterWidth: number,
-  collapsed = false,
   theme: ResolvedTheme = "dark",
 ) {
   const palette = CANVAS_PALETTES[theme];
@@ -1619,12 +1617,10 @@ function drawEditor(
       weight,
       tr.sampleRate,
     );
-    // The label is part of the lane, not part of the utility gutter. It is
-    // deliberately painted after the trace to provide a clean, stable name
-    // plate at the start of every waveform.
-    if (!collapsed) {
-      drawLaneLabel(ctx, tr.label, plotX + 8, mid, laneHeight, color, false, theme);
-    }
+    // The label is part of the lane, not part of the utility gutter. Keep it
+    // painted after the trace even when S/M controls are collapsed so the
+    // derivation name stays put at the start of every waveform.
+    drawLaneLabel(ctx, tr.label, plotX + 8, mid, laneHeight, color, false, theme);
   });
 
 }
