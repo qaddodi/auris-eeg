@@ -86,11 +86,11 @@ export function Transport({ onOpenFile, onTogglePanel, onToggleFocus, onToggleFu
         variant={zoomLocked ? "default" : "secondary"}
         className="shrink-0 px-2"
         aria-pressed={zoomLocked}
-        aria-label={zoomLocked ? "Unlock scroll zoom" : "Lock scroll zoom"}
-        title={zoomLocked ? "Scroll and trackpad gestures pan; zoom buttons remain available" : "Lock the time window so scrolling pans instead of zooming"}
+        aria-label={`Zoom lock: ${zoomLocked ? "on" : "off"}`}
+        title={zoomLocked ? "Zoom lock on: scroll and trackpad gestures pan; zoom buttons remain available" : "Zoom lock off: scrolling zooms the time window"}
         onClick={() => setZoomLocked(!zoomLocked)}
       >
-        {zoomLocked ? <Lock /> : <Unlock />}<span className="hidden sm:inline">{zoomLocked ? "Locked" : "Lock"}</span>
+        {zoomLocked ? <Lock /> : <Unlock />}<span className="hidden sm:inline">Zoom lock</span>
       </Button>
       <select className={`${selectClass} w-[4.75rem]`} aria-label="Time window" value={selectedDuration}
         onChange={(event) => setViewDuration(event.currentTarget.value === "all" ? total : Number(event.currentTarget.value))}>

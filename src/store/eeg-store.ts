@@ -531,7 +531,7 @@ export const useEegStore = create<AppState>((set, get) => {
     playbackStatus: "stopped",
     viewStart: 0,
     viewDuration: DEFAULT_VIEW_SEC,
-    zoomLocked: false,
+    zoomLocked: true,
     followPlayhead: true,
     manualNavigationOverride: false,
     hoverCursor: null,
