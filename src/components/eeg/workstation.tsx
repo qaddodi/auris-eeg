@@ -12,6 +12,7 @@ import {
 import { Activity, PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ControlPanel } from "./control-panel";
+import { ReviewBar } from "./review-bar";
 import { Transport } from "./transport";
 import { WaveformView } from "./waveform-view";
 import { useEditorKeys } from "./use-editor-keys";
@@ -66,16 +67,19 @@ export function Workstation() {
     >
       <input ref={fileRef} type="file" accept=".edf,.EDF" className="sr-only" onChange={onFile} />
       {!focusEeg && (
-        <Transport
-          onOpenFile={() => fileRef.current?.click()}
-          onTogglePanel={togglePanel}
-          onToggleFocus={toggleFocusEeg}
-          onToggleFullscreen={() => {
-            if (!document.fullscreenElement) void document.documentElement.requestFullscreen?.();
-            else void document.exitFullscreen?.();
-          }}
-          onAbout={() => setAboutOpen(true)}
-        />
+        <>
+          <Transport
+            onOpenFile={() => fileRef.current?.click()}
+            onTogglePanel={togglePanel}
+            onToggleFocus={toggleFocusEeg}
+            onToggleFullscreen={() => {
+              if (!document.fullscreenElement) void document.documentElement.requestFullscreen?.();
+              else void document.exitFullscreen?.();
+            }}
+            onAbout={() => setAboutOpen(true)}
+          />
+          <ReviewBar />
+        </>
       )}
 
       <div className="relative flex min-h-0 flex-1">

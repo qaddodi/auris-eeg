@@ -38,6 +38,65 @@ const DSA_RIGHT = 82;
 const DSA_TOP = 14;
 const DSA_BOTTOM = 17;
 const EVENT_LANE = 18;
+
+/** Keep the montage's related derivations together without hiding any valid
+ * clinical channels. Auxiliary channels form a separate visual band and EKG
+ * is always the final lane, matching the way clinicians scan a tracing. */
+const DISPLAY_KIND_ORDER: Record<ProcessedTrack["kind"], number> = {
+  eeg: 0,
+  eog: 1,
+  emg: 1,
+  dc: 1,
+  other: 1,
+  extra: 3,
+  ekg: 2,
+};
+
+function electrodeRank(label: string): number {
+  const token = label
+    .split(/[–-]/)[0]
+    ?.trim()
+    .toUpperCase()
+    .replace(/^(EEG|EOG|EMG|ECG|EKG)\s+/, "") ?? "";
+  if (/^FP/.test(token)) return 0;
+  if (/^F/.test(token)) return 1;
+  if (/^(T|FT)/.test(token)) return 2;
+  if (/^C/.test(token)) return 3;
+  if (/^P/.test(token)) return 4;
+  if (/^O/.test(token)) return 5;
+  return 6;
+}
+
+function lateralityRank(track: ProcessedTrack): number {
+  if (track.laterality === "left") return 0;
+  if (track.laterality === "right") return 1;
+  if (track.laterality === "midline") return 2;
+  return 3;
+}
+
+function orderedDisplayTracks(tracks: ProcessedTrack[]): ProcessedTrack[] {
+  return tracks
+    .map((track, index) => ({ track, index }))
+    .sort((a, b) => {
+      const kind = DISPLAY_KIND_ORDER[a.track.kind] - DISPLAY_KIND_ORDER[b.track.kind];
+      if (kind !== 0) return kind;
+      if (a.track.kind === "eeg") {
+        const region = electrodeRank(a.track.label) - electrodeRank(b.track.label);
+        if (region !== 0) return region;
+        const side = lateralityRank(a.track) - lateralityRank(b.track);
+        if (side !== 0) return side;
+      }
+      return a.index - b.index;
+    })
+    .map(({ track }) => track);
+}
+
+function displayBand(track: ProcessedTrack): "eeg" | "aux" | "ekg" {
+  if (track.kind === "ekg") return "ekg";
+  if (track.kind === "eeg") return "eeg";
+  return "aux";
+}
+
 function traceWeight(hovered: boolean): number {
   return hovered ? 1.1 : 1;
 }
@@ -179,6 +238,7 @@ export function WaveformView() {
     kind:
       | "seek"
       | "pan"
+      | "editor-pan"
       | "resize-l"
       | "resize-r"
       | "scrub"
@@ -242,8 +302,8 @@ export function WaveformView() {
       const s = useEegStore.getState();
       let editorSegment = s.displaySegment;
       const hidden = new Set(s.hiddenTrackIds);
-      const overviewList = (s.segment?.tracks ?? []).filter(
-        (t) => t.kind !== "extra" && !hidden.has(t.id),
+      const overviewList = orderedDisplayTracks(
+        (s.segment?.tracks ?? []).filter((t) => t.kind !== "extra" && !hidden.has(t.id)),
       );
       const total = s.segment?.duration ?? 0;
       const t = eegNow(s);
@@ -268,7 +328,11 @@ export function WaveformView() {
           viewEnd <= editorSegment.start + editorSegment.duration + 1e-6,
       );
       const editorList = editorReady
-        ? (editorSegment?.tracks ?? []).filter((t) => t.kind !== "extra" && !hidden.has(t.id))
+        ? orderedDisplayTracks(
+            (editorSegment?.tracks ?? []).filter(
+              (t) => t.kind !== "extra" && !hidden.has(t.id),
+            ),
+          )
         : [];
       const displayStart = editorSegment?.start ?? 0;
 
@@ -460,9 +524,11 @@ export function WaveformView() {
     const vs = latest.viewStart;
     const frac = clamp(x / Math.max(1, plotW), 0, 1);
     const t = timeAtFraction(frac, vs, s.viewDuration);
-    const laneIds = (latest.displaySegment?.tracks ?? latest.segment?.tracks ?? [])
-      .filter((track) => track.kind !== "extra" && !latest.hiddenTrackIds.includes(track.id))
-      .map((track) => track.id);
+    const laneIds = orderedDisplayTracks(
+      (latest.displaySegment?.tracks ?? latest.segment?.tracks ?? []).filter(
+        (track) => track.kind !== "extra" && !latest.hiddenTrackIds.includes(track.id),
+      ),
+    ).map((track) => track.id);
     const laneH = Math.max(1, (rect.height - RULER) / Math.max(1, laneIds.length));
     const y = e.clientY - rect.top;
     const annotationCandidates = latest.showAnnotations
@@ -488,6 +554,12 @@ export function WaveformView() {
     );
     if (annotationId && latest.tool === "pointer") {
       latest.selectAnnotation(annotationId);
+      return;
+    }
+    // The pan tool is deliberately separate from pointer/scrub: dragging the
+    // trace moves the review window without changing the EEG cursor.
+    if ((s.tool as string) === "pan") {
+      dragRef.current = { kind: "editor-pan", x0: e.clientX, start0: vs, dur0: s.viewDuration };
       return;
     }
     if (s.tool === "annotate") {
@@ -570,8 +642,10 @@ export function WaveformView() {
     if (!drag) {
       const rect = wrapRef.current?.getBoundingClientRect();
       const state = useEegStore.getState();
-      const list = (state.displaySegment?.tracks ?? state.segment?.tracks ?? []).filter(
-        (track) => track.kind !== "extra" && !state.hiddenTrackIds.includes(track.id),
+      const list = orderedDisplayTracks(
+        (state.displaySegment?.tracks ?? state.segment?.tracks ?? []).filter(
+          (track) => track.kind !== "extra" && !state.hiddenTrackIds.includes(track.id),
+        ),
       );
       const contentX = rect ? e.clientX - rect.left + (wrapRef.current?.scrollLeft ?? 0) : 0;
       if (rect && contentX >= GUTTER && list.length > 0) {
@@ -624,6 +698,14 @@ export function WaveformView() {
       const next = timeAtFraction(frac, vs, s.viewDuration);
       seekEeg(next);
       if (s.audibleScrub) playback.scrubAt(next, e.clientX - drag.x0);
+      return;
+    }
+    if (drag.kind === "editor-pan" && wrapRef.current) {
+      const rect = wrapRef.current.getBoundingClientRect();
+      const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - GUTTER);
+      // Content follows the pointer: dragging right reveals earlier time.
+      const dt = ((e.clientX - drag.x0) / plotW) * drag.dur0;
+      setView(drag.start0 - dt, drag.dur0);
       return;
     }
     if (
@@ -688,11 +770,15 @@ export function WaveformView() {
     const onWheel = (e: WheelEvent) => {
       if (!useEegStore.getState().segment) return;
       e.preventDefault();
-      if (e.shiftKey) {
+      // Trackpads emit horizontal deltaX for a natural left/right browse. A
+      // shifted vertical wheel remains a convenient pan gesture for mice.
+      const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      if (horizontal || e.shiftKey) {
         const s = useEegStore.getState();
         if (s.followPlayhead) s.setFollow(false);
         const span = s.viewDuration;
-        panView((e.deltaY + e.deltaX) * 0.0015 * span);
+        const delta = horizontal ? e.deltaX : e.deltaY;
+        panView(delta * 0.0015 * span);
         return;
       }
       const rect = wrap.getBoundingClientRect();
@@ -712,8 +798,11 @@ export function WaveformView() {
   }, [panView, zoomAt]);
 
   const hiddenTrackIds = useEegStore((s) => s.hiddenTrackIds);
-  const list = (displaySegment?.tracks ?? segment?.tracks ?? []).filter(
-    (t) => t.kind !== "extra" && !hiddenTrackIds.includes(t.id),
+  const tool = useEegStore((s) => s.tool);
+  const list = orderedDisplayTracks(
+    (displaySegment?.tracks ?? segment?.tracks ?? []).filter(
+      (t) => t.kind !== "extra" && !hiddenTrackIds.includes(t.id),
+    ),
   );
 
   return (
@@ -763,7 +852,10 @@ export function WaveformView() {
 
       <div
         ref={wrapRef}
-        className="relative min-h-0 flex-1 overflow-hidden bg-bg select-none"
+        className={cn(
+          "relative min-h-0 flex-1 overflow-hidden bg-bg select-none",
+          (tool as string) === "pan" ? "cursor-grab touch-none" : "cursor-crosshair",
+        )}
         onPointerDown={onEditorPointer}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -778,8 +870,14 @@ export function WaveformView() {
           <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
           {list.length > 0 && (
             <div className="pointer-events-none absolute bottom-0 left-0 z-10 w-[132px]" style={{ top: RULER }}>
-              {list.map((tr) => (
-                <TrackGutter key={tr.id} track={tr} count={list.length} compact={list.length > 12} />
+              {list.map((tr, index) => (
+                <TrackGutter
+                  key={tr.id}
+                  track={tr}
+                  previous={list[index - 1]}
+                  count={list.length}
+                  compact={list.length > 12}
+                />
               ))}
             </div>
           )}
@@ -876,6 +974,12 @@ function drawEditor(
   list.forEach((tr, i) => {
     const y0 = plotTop + i * laneH;
     const mid = y0 + laneH / 2;
+    if (i > 0 && displayBand(list[i - 1]!) !== displayBand(tr)) {
+      // Preserve equal lane geometry so annotations and hit-testing remain
+      // aligned, while making the EEG/auxiliary/EKG boundaries unmistakable.
+      ctx.fillStyle = "rgba(232,234,237,0.13)";
+      ctx.fillRect(0, y0, cssW, Math.min(3, laneH));
+    }
     ctx.strokeStyle = "rgba(232,234,237,0.05)";
     ctx.beginPath();
     ctx.moveTo(plotX, mid);
@@ -1352,10 +1456,12 @@ function drawDsaOverlay(
 
 function TrackGutter({
   track,
+  previous,
   count,
   compact,
 }: {
   track: ProcessedTrack;
+  previous?: ProcessedTrack;
   count: number;
   compact: boolean;
 }) {
@@ -1374,6 +1480,7 @@ function TrackGutter({
     <div
       className={cn(
         "pointer-events-auto flex items-center gap-0.5 border-b border-border/50 px-1",
+        previous && displayBand(previous) !== displayBand(track) && "border-t-2 border-accent/30",
         focused && "bg-accent/8",
         hidden && "opacity-50",
       )}

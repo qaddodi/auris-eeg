@@ -186,6 +186,13 @@ export function EventList() {
 
   return (
     <section className="space-y-3" aria-label="Annotations">
+      <div className="flex items-end justify-between gap-3 rounded-md border border-border bg-bg px-3 py-2">
+        <div>
+          <p className="text-sm font-medium text-fg">Review markers</p>
+          <p className="text-[0.6875rem] text-subtle">Jump between events or add one at the cursor</p>
+        </div>
+        <span className="font-mono text-xs tabular-nums text-muted">{visible.length}/{annotations.length}</span>
+      </div>
       <p className="text-pretty text-xs leading-5 text-muted">
         Suggested waveforms are educational markers, not a diagnosis. Add a marker at the cursor or
         press A and click the tracing.
@@ -294,7 +301,7 @@ export function EventList() {
         </Button>
       </form>
 
-      <div className="grid grid-cols-[1fr_auto] gap-2">
+      <div className="grid grid-cols-[1fr_auto] gap-2 rounded-md border border-border bg-surface p-2">
         <label className="sr-only" htmlFor="annotation-search">
           Search markers
         </label>
@@ -344,7 +351,7 @@ export function EventList() {
           </Button>
         </div>
       </div>
-      <ul className="max-h-48 space-y-1 overflow-auto" aria-label="Review markers">
+      <ul className="max-h-64 space-y-1 overflow-auto pr-0.5" aria-label="Review markers">
         {visible.length === 0 && (
           <li className="rounded-sm border border-dashed border-border p-2 text-xs text-subtle">
             No matching markers.
@@ -355,7 +362,7 @@ export function EventList() {
             <button
               type="button"
               onClick={() => selectAnnotation(annotation.id)}
-              className={`flex min-h-9 w-full items-center gap-2 rounded-sm border-l-2 px-2 py-1 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${selectedId === annotation.id ? "border-accent bg-surface-2" : annotation.source === "auto" ? "border-warn/70 border-dashed hover:bg-bg" : "border-transparent hover:bg-bg"}`}
+              className={`flex min-h-10 w-full items-center gap-2 rounded-md border border-border/70 border-l-2 px-2.5 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${selectedId === annotation.id ? "border-accent bg-surface-2" : annotation.source === "auto" ? "border-warn/40 border-l-warn/70 border-dashed hover:bg-bg" : "border-transparent hover:border-border hover:bg-bg"}`}
             >
               <span
                 className="size-2 shrink-0 rounded-full"

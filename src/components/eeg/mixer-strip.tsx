@@ -45,7 +45,12 @@ export function MixerStrip() {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-1">
+      <div className="rounded-md border border-border bg-bg p-2">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="text-xs font-medium text-fg">Channel mix</p>
+          <span className="text-[0.625rem] text-subtle">{list.length} tracks</span>
+        </div>
+        <div className="flex flex-wrap gap-1">
         <Button size="sm" variant="secondary" onClick={() => soloHemi("left")}>
           Solo L
         </Button>
@@ -58,12 +63,14 @@ export function MixerStrip() {
         <Button size="sm" variant="ghost" onClick={unmuteAll}>
           Unmute all
         </Button>
+        </div>
       </div>
       {groups.map((g) => (
-        <div key={g.kind} className="space-y-1">
-          <p className="text-[0.625rem] font-medium uppercase tracking-wider text-subtle">
-            {KIND_LABEL[g.kind]}
-          </p>
+        <div key={g.kind} className={cn("space-y-1 rounded-md border border-border/70 p-2", g.kind !== "eeg" && "mt-2 bg-bg/60")}>
+          <div className="flex items-center justify-between">
+            <p className="text-[0.625rem] font-medium uppercase tracking-wider text-subtle">{KIND_LABEL[g.kind]}</p>
+            <span className="text-[0.625rem] tabular-nums text-subtle">{g.rows.length}</span>
+          </div>
           <ul className="space-y-0.5">
             {g.rows.map((tr) => {
               const st = tracks[tr.id] as TrackState | undefined;
@@ -114,6 +121,9 @@ export function MixerStrip() {
                     )}
                   >
                     {latLetter(lat)}
+                  </span>
+                  <span className="w-8 shrink-0 text-right font-mono text-[0.5625rem] tabular-nums text-subtle">
+                    {Math.round((st?.gain ?? 1) * 100)}%
                   </span>
                   <input
                     type="range"

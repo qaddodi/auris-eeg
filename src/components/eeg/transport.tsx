@@ -3,7 +3,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import {
   Download, Expand, Eye, EyeOff, Info, Keyboard, MoreHorizontal, PanelLeft, Pause, Play,
-  Repeat, Scan, Square, Upload, ZoomIn, ZoomOut,
+  Repeat, Scan, Square, Upload, Volume2, VolumeX, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { VIEW_PRESETS } from "@/lib/eeg/view";
@@ -86,16 +86,25 @@ export function Transport({ onOpenFile, onTogglePanel, onToggleFocus, onToggleFu
         <option value="all">All</option>
       </select>
       <Button size="iconSm" variant="ghost" aria-label="Zoom in" onClick={() => zoomAt(1 / 1.25)}><ZoomIn /></Button>
-      <select className={`${selectClass} hidden w-[7.5rem] md:block`} aria-label="Sound mode" value={soundMode}
+      <div className="hidden items-center gap-1 rounded-sm border border-border bg-bg px-1 md:flex">
+        <span className={soundActive ? "text-accent" : "text-muted"} title={soundActive ? "Sound on" : "Sound off"}>
+          {soundActive ? <Volume2 className="size-3.5" /> : <VolumeX className="size-3.5" />}
+        </span>
+        <select className="h-7 w-[6.5rem] bg-transparent px-1 text-xs text-fg outline-none" aria-label="Sound mode" value={soundMode}
         onChange={(event) => setSoundMode(event.currentTarget.value as typeof soundMode)}>
         <SoundOptions />
-      </select>
+        </select>
+      </div>
+      <Button size="sm" variant={showDsa ? "default" : "ghost"} className="hidden lg:inline-flex" aria-pressed={showDsa}
+        onClick={() => setShowDsa(!showDsa)} title={showDsa ? "Hide DSA" : "Show DSA"}>
+        {showDsa ? <EyeOff /> : <Eye />} DSA
+      </Button>
       <div className="min-w-0 flex-1" />
       <span className="font-mono text-xs tabular-nums text-muted">EEG <span ref={eegRef} className="text-fg">{formatTime(playheadEeg, true)}</span></span>
       <details className="group relative">
         <summary className="grid size-8 list-none place-items-center rounded-sm text-muted hover:bg-surface-2 hover:text-fg [&::-webkit-details-marker]:hidden" aria-label="More controls"><MoreHorizontal className="size-4" /></summary>
         <div className="absolute right-0 top-9 z-50 grid w-56 gap-1 rounded-md border border-border bg-surface p-2 shadow-2xl">
-          <select className={`${selectClass} w-full md:hidden`} aria-label="Sound mode" value={soundMode}
+          <select className="h-8 w-full rounded-sm border border-border bg-bg px-2 text-xs text-fg outline-none focus:border-accent md:hidden" aria-label="Sound mode" value={soundMode}
             onChange={(event) => setSoundMode(event.currentTarget.value as typeof soundMode)}><SoundOptions /></select>
           <MenuButton onClick={() => setFollow(!follow)} icon={<Scan />} label={follow ? "Stop following" : "Follow playhead"} />
           <MenuButton onClick={() => setLoop(!loop)} icon={<Repeat />} label={loop ? "Disable loop" : "Loop playback"} />

@@ -94,6 +94,34 @@ export function auxDerivations(channels: ChannelInfo[]): Derivation[] {
   const emg = channels.filter((c) => c.kind === "emg");
   const extra = channels.filter((c) => c.kind === "extra");
   const out: Derivation[] = [];
+  const leftEog = eog.find((c) => eyelidSide(c) === "left");
+  const rightEog = eog.find((c) => eyelidSide(c) === "right");
+  const pairedEog = new Set<number>();
+  if (leftEog && rightEog) {
+    const sameRate = leftEog.sampleRate === rightEog.sampleRate;
+    out.push({
+      id: "aux:eog-l-r",
+      label: "EOG L–R (bipolar)",
+      // applyDerivation computes a - b; preserve the clinical L minus R polarity.
+      sources: [leftEog.index, rightEog.index],
+      laterality: "midline",
+      kind: "eog",
+      sampleRate: leftEog.sampleRate,
+      available: sameRate,
+      missing: sameRate ? [] : ["matching sample rates"],
+    });
+    pairedEog.add(leftEog.index);
+    pairedEog.add(rightEog.index);
+  }
+  for (const c of eog) {
+    if (!pairedEog.has(c.index)) {
+      out.push(referential(c, "eog", auxDisplayLabel("eog", c.canonical)));
+    }
+  }
+  for (const c of emg) out.push(referential(c, "emg", auxDisplayLabel("emg", c.canonical)));
+  for (const c of extra) out.push(referential(c, "extra", c.canonical));
+  // Keep auxiliary traces grouped after EEG; EKG is deliberately last so it
+  // renders at the bottom, with the bipolar EOG directly above it.
   if (ekg.length >= 2) {
     const sameRate = ekg[0]!.sampleRate === ekg[1]!.sampleRate;
     out.push({
@@ -109,31 +137,6 @@ export function auxDerivations(channels: ChannelInfo[]): Derivation[] {
   } else {
     for (const c of ekg) out.push(referential(c, "ekg", auxDisplayLabel("ekg", c.canonical)));
   }
-  const leftEog = eog.find((c) => eyelidSide(c) === "left");
-  const rightEog = eog.find((c) => eyelidSide(c) === "right");
-  const pairedEog = new Set<number>();
-  if (leftEog && rightEog) {
-    const sameRate = leftEog.sampleRate === rightEog.sampleRate;
-    out.push({
-      id: "aux:eog-r-l",
-      label: "EOG R–L (bipolar)",
-      sources: [rightEog.index, leftEog.index],
-      laterality: "midline",
-      kind: "eog",
-      sampleRate: rightEog.sampleRate,
-      available: sameRate,
-      missing: sameRate ? [] : ["matching sample rates"],
-    });
-    pairedEog.add(leftEog.index);
-    pairedEog.add(rightEog.index);
-  }
-  for (const c of eog) {
-    if (!pairedEog.has(c.index)) {
-      out.push(referential(c, "eog", auxDisplayLabel("eog", c.canonical)));
-    }
-  }
-  for (const c of emg) out.push(referential(c, "emg", auxDisplayLabel("emg", c.canonical)));
-  for (const c of extra) out.push(referential(c, "extra", c.canonical));
   return out;
 }
 

@@ -157,6 +157,28 @@ export function ensureVisible(
   );
 }
 
+/**
+ * Shift a manual viewport along the recording timeline. Keeping this as a
+ * pure geometry helper gives pointer, wheel, and keyboard panning identical
+ * edge-clamping behavior.
+ */
+export function panNavigationViewport(
+  viewport: NavigationViewport,
+  deltaSec: number,
+  recordingDurationSec: number,
+): NavigationViewport {
+  const current = clampNavigationViewport(
+    viewport.startSec,
+    viewport.durationSec,
+    recordingDurationSec,
+  );
+  return clampNavigationViewport(
+    current.startSec + finiteOr(deltaSec, 0),
+    current.durationSec,
+    recordingDurationSec,
+  );
+}
+
 function viewportForPosition(state: NavigationState, positionSec: number): NavigationViewport {
   return followNavigationViewport(
     positionSec,
@@ -260,9 +282,9 @@ export function reduceNavigation(
       return {
         ...state,
         followMode: "manual",
-        viewport: clampNavigationViewport(
-          state.viewport.startSec + finiteOr(action.deltaSec, 0),
-          state.viewport.durationSec,
+        viewport: panNavigationViewport(
+          state.viewport,
+          action.deltaSec,
           state.recordingDurationSec,
         ),
       };

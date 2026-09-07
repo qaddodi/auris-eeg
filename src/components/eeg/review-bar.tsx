@@ -1,7 +1,17 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Activity, Eye, EyeOff, Lightbulb, MousePointer2, Ruler } from "lucide-react";
+import {
+  Activity,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  Hand,
+  Lightbulb,
+  MousePointer2,
+  Ruler,
+} from "lucide-react";
 import { HFF_PRESETS, LFF_PRESETS, PAGE_PRESETS, SENSITIVITY_PRESETS } from "@/lib/eeg/defaults";
 import type { MontageKind } from "@/lib/eeg/types";
 import { cn } from "@/lib/utils";
@@ -22,6 +32,7 @@ export function ReviewBar() {
   const setSensitivity = useEegStore((s) => s.setSensitivity);
   const viewDuration = useEegStore((s) => s.viewDuration);
   const setViewDuration = useEegStore((s) => s.setViewDuration);
+  const panView = useEegStore((s) => s.panView);
   const page = useEegStore((s) => s.page);
   const tool = useEegStore((s) => s.tool);
   const setTool = useEegStore((s) => s.setTool);
@@ -86,6 +97,27 @@ export function ReviewBar() {
           </button>
         </div>
       </Field>
+      <div className="flex items-end gap-1" aria-label="Pan EEG window">
+        <button
+          type="button"
+          className={toolClass + " bg-bg text-muted hover:bg-surface-2 hover:text-fg"}
+          onClick={() => panView(-Math.max(1, viewDuration * 0.5))}
+          aria-label="Pan EEG window left"
+          title="Pan left"
+        >
+          <ChevronLeft />
+          <span className="hidden xl:inline">Pan</span>
+        </button>
+        <button
+          type="button"
+          className={toolClass + " bg-bg text-muted hover:bg-surface-2 hover:text-fg"}
+          onClick={() => panView(Math.max(1, viewDuration * 0.5))}
+          aria-label="Pan EEG window right"
+          title="Pan right"
+        >
+          <ChevronRight />
+        </button>
+      </div>
       <Field label="LFF">
         <select
           className={selectClass}
@@ -153,6 +185,21 @@ export function ReviewBar() {
         >
           <MousePointer2 />
           Pointer
+        </button>
+        <button
+          type="button"
+          onClick={() => setTool("pan")}
+          className={cn(
+            toolClass,
+            tool === "pan"
+              ? "bg-accent text-accent-fg"
+              : "bg-bg text-muted hover:bg-surface-2 hover:text-fg",
+          )}
+          aria-pressed={tool === "pan"}
+          title="Drag the EEG trace to pan the review window"
+        >
+          <Hand />
+          <span className="hidden lg:inline">Pan</span>
         </button>
         <button
           type="button"

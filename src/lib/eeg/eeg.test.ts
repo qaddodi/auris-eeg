@@ -630,13 +630,18 @@ describe("polygraphy channel kinds", () => {
       d.some(
         (x) =>
           x.kind === "eog" &&
-          x.label === "EOG R–L (bipolar)" &&
-          x.sources[0] === 21 &&
-          x.sources[1] === 20 &&
+          x.label === "EOG L–R (bipolar)" &&
+          x.sources[0] === 20 &&
+          x.sources[1] === 21 &&
           x.available,
       ),
     );
     assert.ok(d.filter((x) => x.kind === "eeg").length >= 8);
+    const eog = d.find((x) => x.id === "aux:eog-l-r");
+    const ekg = d.find((x) => x.id === "aux:ekg");
+    assert.ok(eog && ekg);
+    assert.ok(d.indexOf(eog!) < d.indexOf(ekg!));
+    assert.equal(d[d.length - 1]!.id, "aux:ekg");
   });
 });
 

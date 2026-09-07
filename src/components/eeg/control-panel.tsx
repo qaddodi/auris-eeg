@@ -45,6 +45,9 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
   const sonify = useEegStore((s) => s.sonify);
   const setSonify = useEegStore((s) => s.setSonify);
   const soundMode = useEegStore((s) => s.soundMode);
+  const setSoundMode = useEegStore((s) => s.setSoundMode);
+  const showDsa = useEegStore((s) => s.showDsa);
+  const setShowDsa = useEegStore((s) => s.setShowDsa);
   const evidencePreparation = useEegStore((s) => s.evidencePreparation);
   const evidenceReason = useEegStore((s) => s.evidenceReason);
   const exportMappingAudit = useEegStore((s) => s.exportMappingAudit);
@@ -420,6 +423,15 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
                   className="size-4 accent-accent"
                 />
               </label>
+              <label className="flex items-center justify-between gap-2 text-sm text-fg">
+                DSA heatmap
+                <input
+                  type="checkbox"
+                  checked={showDsa}
+                  onChange={(e) => setShowDsa(e.target.checked)}
+                  className="size-4 accent-accent"
+                />
+              </label>
             </section>
           </>
         )}
@@ -429,6 +441,28 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
             <Separator />
 
             <section className="space-y-3 p-4">
+              <div className="rounded-md border border-border bg-bg p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-medium text-fg">Audio output</p>
+                    <p className="text-[0.6875rem] text-subtle">Choose a live sonification mode</p>
+                  </div>
+                  <button type="button" role="switch" aria-checked={soundMode !== "off"}
+                    onClick={() => setSoundMode(soundMode === "off" ? "experimental" : "off")}
+                    className={`relative h-6 w-11 rounded-full transition-colors ${soundMode === "off" ? "bg-surface-2" : "bg-accent"}`}
+                    aria-label={soundMode === "off" ? "Turn audio on" : "Turn audio off"}>
+                    <span className={`absolute top-1 size-4 rounded-full bg-white transition-transform ${soundMode === "off" ? "left-1" : "left-6"}`} />
+                  </button>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-1.5">
+                  {(["experimental", "musical", "evidence", "hybrid"] as const).map((mode) => (
+                    <button key={mode} type="button" onClick={() => setSoundMode(mode)}
+                      className={`h-8 rounded-sm px-2 text-left text-xs capitalize ${soundMode === mode ? "bg-accent text-accent-fg" : "bg-surface text-muted shadow-border hover:text-fg"}`}>
+                      {mode === "experimental" ? "Explore" : mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-subtle">
                   Sonification
@@ -577,6 +611,20 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
                   onChange={(e) => setFilters({ removeDc: e.target.checked })}
                   className="size-4 accent-accent"
                 />
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="grid gap-1 text-[0.625rem] font-medium uppercase tracking-wide text-subtle" htmlFor="sidebar-lff">
+                  LFF (Hz)
+                  <input id="sidebar-lff" type="number" min="0" max="100" step="0.1" value={filters.lff} onChange={(e) => setFilters({ lff: Number(e.target.value), bandpass: false })} className={field} />
+                </label>
+                <label className="grid gap-1 text-[0.625rem] font-medium uppercase tracking-wide text-subtle" htmlFor="sidebar-hff">
+                  HFF (Hz)
+                  <input id="sidebar-hff" type="number" min="0" max="500" step="1" value={filters.hff} onChange={(e) => setFilters({ hff: Number(e.target.value), bandpass: false })} className={field} />
+                </label>
+              </div>
+              <label className="flex items-center justify-between text-sm">
+                Notch 60 Hz
+                <input type="checkbox" checked={filters.notch60} onChange={(e) => setFilters({ notch60: e.target.checked })} className="size-4 accent-accent" />
               </label>
             </section>
           </>

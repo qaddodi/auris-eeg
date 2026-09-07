@@ -129,7 +129,7 @@ export interface AppState {
   hiddenTrackIds: string[];
   showAuto: boolean;
   showAnnotations: boolean;
-  tool: "pointer" | "annotate" | "caliper";
+  tool: "pointer" | "pan" | "annotate" | "caliper";
   pendingType: MorphologyType;
   showDsa: boolean;
   dsa: DsaFrame | null;
