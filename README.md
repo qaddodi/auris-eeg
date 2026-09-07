@@ -6,7 +6,9 @@ alert on seizures.
 
 Open a deidentified EDF or EDF+ file in the browser. The file is parsed and
 calibrated locally; no recording is uploaded and annotations are held in the
-current session only. The app can also generate a built-in synthetic tracing.
+current session only. The workstation opens on a bundled TUH EEG recording
+(`aaaaaaly_s003_t001.edf`) so review starts on real waveforms rather than a
+synthetic sine tracing.
 
 The current workstation provides:
 

@@ -25,10 +25,15 @@ and user-defined pairs are represented as explicit derivations. A bipolar pair
 is available only when its source rates and lengths are compatible. Filters
 reject invalid cutoff/rate combinations and return new arrays.
 
-Waveforms use the display branch. EKG has a whole-record median baseline and
-robust display profile independent of EEG sensitivity; that normalization is
-never sent to audio or export. DSA uses the analysis data and exposes a stable
-cursor-linked view.
+Waveforms use the display branch. Review pages plot every calibrated sample at
+its true time as a polyline (native mode) so no point is dropped before
+filtering. When a window is both denser than one sample per pixel and longer
+than the native sample budget, the renderer switches to peak-hold columns:
+every source sample in a physical pixel contributes to that pixel's min and
+max, so spikes keep their true amplitude. EKG has a whole-record median
+baseline and robust display profile independent of EEG sensitivity; that
+normalization is never sent to audio or export. DSA uses the analysis data
+and exposes a stable cursor-linked view.
 
 ## Annotations and privacy
 

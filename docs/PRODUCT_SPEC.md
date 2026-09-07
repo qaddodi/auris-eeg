@@ -9,7 +9,7 @@ Pages site, with no account, upload, database, or cross-device session model.
 
 ## User flow
 
-1. Open an EDF/EDF+ file or generate the built-in synthetic demo tracing.
+1. Open an EDF/EDF+ file, or review the bundled TUH recording that loads on startup.
 2. Review validated recording metadata and selected channels.
 3. Choose a montage, optional filters, sensitivity, timebase, and viewport.
 4. Review waveforms, DSA, file annotations, and user markers.

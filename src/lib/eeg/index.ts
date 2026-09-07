@@ -7,6 +7,7 @@ export * from "./sonify.ts";
 export * from "./stereo.ts";
 export * from "./audio.ts";
 export * from "./synthetic.ts";
+export * from "./default-recording.ts";
 export * from "./view.ts";
 export * from "./shortcuts.ts";
 export * from "./spectrum.ts";

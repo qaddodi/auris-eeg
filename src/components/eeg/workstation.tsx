@@ -16,7 +16,7 @@ import { Transport } from "./transport";
 import { WaveformView } from "./waveform-view";
 import { useEditorKeys } from "./use-editor-keys";
 import { SHORTCUTS } from "@/lib/eeg/shortcuts";
-import { buildSyntheticEdf } from "@/lib/eeg/synthetic";
+import { fetchDefaultRecording } from "@/lib/eeg/default-recording";
 import { useEegStore } from "@/store/eeg-store";
 import {
   nextThemeMode,
@@ -72,8 +72,8 @@ export function Workstation() {
     let cancelled = false;
     (async () => {
       try {
-        const buffer = buildSyntheticEdf({ duration: 60 });
-        if (!cancelled) await loadFile(buffer, "synthetic-demo.edf");
+        const bundled = await fetchDefaultRecording();
+        if (!cancelled) await loadFile(bundled.buffer, bundled.name);
       } catch {
         /* The editor remains ready for a local EDF if a demo cannot initialize. */
       }

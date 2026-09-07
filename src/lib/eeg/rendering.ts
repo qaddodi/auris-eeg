@@ -1,13 +1,19 @@
 import { ekgDisplayProfile, type EkgDisplayProfile } from "./display.ts";
 
 /**
+ * Prefer a vertex for every source sample on typical review pages. Envelope
+ * mode is reserved for dense, zoomed-out views where a polyline of every
+ * sample would be larger than the native budget.
+ */
+export const NATIVE_RENDER_SAMPLE_LIMIT = 65_536;
+
+/**
  * Display data for one channel at one viewport resolution.
  *
- * The renderer deliberately has two modes. At <= one sample per physical
- * pixel it keeps the source sample indices and their true times, so the
- * waveform is not re-sampled onto pixel centres. Once multiple samples map
- * to one pixel, it keeps both extrema for every bin instead of dropping a
- * transient in a nearest/average sample.
+ * Native mode keeps every source sample and its true time so the polyline is
+ * a 1:1 plot of the calibrated buffer. Envelope mode is peak-hold: every
+ * sample in a physical pixel contributes to that pixel's min and max, so a
+ * spike cannot disappear when the page is denser than the canvas.
  */
 export type NativeTraceWindow = {
   mode: "native";
@@ -58,9 +64,27 @@ export function samplesPerPhysicalPixel(
   return ((t1 - t0) * sampleRate) / physicalPixels;
 }
 
+function windowSampleSpan(
+  samples: Float32Array,
+  sampleRate: number,
+  t0: number,
+  t1: number,
+): { first: number; last: number; count: number } {
+  if (samples.length === 0 || sampleRate <= 0 || t1 <= t0) {
+    return { first: 0, last: -1, count: 0 };
+  }
+  const first = Math.max(0, Math.floor(t0 * sampleRate));
+  const last = Math.min(samples.length - 1, Math.ceil(t1 * sampleRate));
+  return { first, last, count: Math.max(0, last - first + 1) };
+}
+
 /**
  * Select a rendering representation without losing extrema at the boundary.
  * `physicalPixels` should be the backing-store width, not CSS width.
+ *
+ * Typical 10–60 s EEG pages stay in native mode so every calibrated sample is
+ * a polyline vertex. Envelope/peak-hold is used only when the visible window
+ * is both denser than one sample per pixel and larger than the native budget.
  */
 export function traceWindow(
   samples: Float32Array,
@@ -74,7 +98,10 @@ export function traceWindow(
     return { mode: "native", indices: new Int32Array(0), values: new Float32Array(0) };
   }
   const spp = samplesPerPhysicalPixel(sampleRate, t0, t1, n);
-  if (spp <= 1) return nativeTraceWindow(samples, sampleRate, t0, t1);
+  const { count } = windowSampleSpan(samples, sampleRate, t0, t1);
+  if (spp <= 1 || count <= NATIVE_RENDER_SAMPLE_LIMIT) {
+    return nativeTraceWindow(samples, sampleRate, t0, t1);
+  }
   return envelopeTraceWindow(samples, sampleRate, t0, t1, n);
 }
 
@@ -164,6 +191,13 @@ export interface EnvelopeWhisker {
   to: number;
 }
 
+export interface PeakHoldColumn {
+  x: number;
+  width: number;
+  min: number;
+  max: number;
+}
+
 function envelopeBinGeometry(
   window: Extract<TraceWindow, { mode: "envelope" }>,
   bin: number,
@@ -176,6 +210,61 @@ function envelopeBinGeometry(
   const minX = x0 + (x1 - x0) * (window.minIndex[bin]! / denominator);
   const maxX = x0 + (x1 - x0) * (window.maxIndex[bin]! / denominator);
   return { x0, x1, minX, maxX };
+}
+
+/** One filled column per physical pixel, spanning the bin's true min and max. */
+export function peakHoldColumns(
+  window: Extract<TraceWindow, { mode: "envelope" }>,
+  plotWidth: number,
+): PeakHoldColumn[] {
+  const columns: PeakHoldColumn[] = [];
+  if (window.min.length === 0 || plotWidth <= 0) return columns;
+  const width = plotWidth / window.min.length;
+  for (let bin = 0; bin < window.min.length; bin++) {
+    columns.push({
+      x: bin * width,
+      width,
+      min: window.min[bin]!,
+      max: window.max[bin]!,
+    });
+  }
+  return columns;
+}
+
+/**
+ * True when every source sample whose time falls in [t0, t1) is inside the
+ * min/max of the envelope bin it maps to. This is the lossless amplitude
+ * contract for peak-hold display.
+ */
+export function envelopeCoversSamples(
+  samples: Float32Array,
+  sampleRate: number,
+  t0: number,
+  t1: number,
+  window: Extract<TraceWindow, { mode: "envelope" }>,
+): boolean {
+  if (window.min.length === 0 || sampleRate <= 0 || t1 <= t0) return samples.length === 0;
+  const span = t1 - t0;
+  const n = window.min.length;
+  const coveredFrom = Math.max(0, Math.floor(t0 * sampleRate));
+  const coveredTo = Math.min(samples.length, Math.floor(t1 * sampleRate));
+  const seen = new Uint8Array(Math.max(0, coveredTo - coveredFrom));
+  for (let p = 0; p < n; p++) {
+    const a = t0 + (p / n) * span;
+    const b = t0 + ((p + 1) / n) * span;
+    const i0 = Math.max(0, Math.floor(a * sampleRate));
+    let i1 = Math.min(samples.length, Math.floor(b * sampleRate));
+    if (i1 <= i0) i1 = Math.min(samples.length, i0 + 1);
+    for (let i = i0; i < i1; i++) {
+      const value = samples[i]!;
+      if (value < window.min[p]! - 1e-6 || value > window.max[p]! + 1e-6) return false;
+      if (i >= coveredFrom && i < coveredTo) seen[i - coveredFrom] = 1;
+    }
+  }
+  for (let i = 0; i < seen.length; i++) {
+    if (seen[i] !== 1) return false;
+  }
+  return true;
 }
 
 /**

@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   cachedEkgDisplayProfile,
+  envelopeCoversSamples,
   envelopeWhiskers,
   envelopeTraceWindow,
   nativeTraceWindow,
+  NATIVE_RENDER_SAMPLE_LIMIT,
   orderedEnvelopePoints,
+  peakHoldColumns,
   representativeEnvelopePoints,
   traceWindow,
   waveformInvalidationKey,
@@ -39,29 +42,40 @@ describe("display-resolution waveform rendering", () => {
     assert.deepEqual([...window.values], [1, 2, 3, 4, 5]);
   });
 
-  it("switches to extrema mode as soon as a pixel has multiple samples", () => {
-    const samples = new Float32Array(10);
-    samples[1] = 50;
-    const native = traceWindow(samples, 10, 0, 1, 10);
-    const envelope = traceWindow(samples, 10, 0, 1, 9);
-    assert.equal(native.mode, "native");
-    assert.equal(envelope.mode, "envelope");
-    assert.equal(Math.max(...envelope.max), 50);
+  it("plots every sample on a typical 10 s EEG page even when pixels are fewer than samples", () => {
+    const fs = 250;
+    const samples = new Float32Array(10 * fs);
+    samples[100] = 88;
+    samples[2000] = -70;
+    const window = traceWindow(samples, fs, 0, 10, 900);
+    assert.equal(window.mode, "native");
+    if (window.mode === "native") {
+      assert.ok([...window.values].includes(88));
+      assert.ok([...window.values].includes(-70));
+      assert.equal(window.values.length, samples.length);
+    }
   });
 
-  it("keeps the native/envelope threshold continuous at exactly one sample per pixel", () => {
+  it("keeps native mode at exactly one sample per pixel and when zoomed in", () => {
     const samples = new Float32Array(100);
     samples[49] = 250;
     samples[50] = -220;
     const exact = traceWindow(samples, 100, 0, 1, 100);
     const zoomed = traceWindow(samples, 100, 0, 1, 101);
-    const dense = traceWindow(samples, 100, 0, 1, 99);
     assert.equal(exact.mode, "native");
     assert.equal(zoomed.mode, "native");
-    assert.equal(dense.mode, "envelope");
-    if (dense.mode === "envelope") {
-      assert.ok(Math.max(...dense.max) >= 250);
-      assert.ok(Math.min(...dense.min) <= -220);
+  });
+
+  it("uses an extrema envelope only when a dense window exceeds the native budget", () => {
+    const samples = new Float32Array(NATIVE_RENDER_SAMPLE_LIMIT + 200);
+    samples[10] = 250;
+    samples[samples.length - 2] = -220;
+    const window = traceWindow(samples, samples.length, 0, 1, 100);
+    assert.equal(window.mode, "envelope");
+    if (window.mode === "envelope") {
+      assert.ok(Math.max(...window.max) >= 250);
+      assert.ok(Math.min(...window.min) <= -220);
+      assert.ok(envelopeCoversSamples(samples, samples.length, 0, 1, window));
     }
   });
 
@@ -96,17 +110,28 @@ describe("display-resolution waveform rendering", () => {
     assert.ok(whiskers.every((segment) => segment.x >= 0 && segment.x <= 100));
   });
 
-  it("retains boundary-bin spikes across threshold zooms", () => {
-    const samples = new Float32Array(100);
+  it("emits one peak-hold column per bin spanning the true min and max", () => {
+    const samples = new Float32Array([0, 10, -8, 2, 1, 4, -3, 2]);
+    const window = envelopeTraceWindow(samples, 8, 0, 1, 2);
+    const columns = peakHoldColumns(window, 200);
+    assert.equal(columns.length, 2);
+    assert.equal(columns[0]!.x, 0);
+    assert.equal(columns[0]!.width, 100);
+    assert.equal(columns[0]!.max, 10);
+    assert.equal(columns[0]!.min, -8);
+    assert.ok(envelopeCoversSamples(samples, 8, 0, 1, window));
+  });
+
+  it("retains boundary-bin spikes across dense envelope widths", () => {
+    const samples = new Float32Array(NATIVE_RENDER_SAMPLE_LIMIT + 50);
     samples[49] = 250;
     samples[50] = -220;
     for (const pixels of [49, 50, 51, 99]) {
-      const window = traceWindow(samples, 100, 0, 1, pixels);
+      const window = envelopeTraceWindow(samples, samples.length, 0, 1, pixels);
       assert.equal(window.mode, "envelope");
-      if (window.mode === "envelope") {
-        assert.ok(Math.max(...window.max) >= 250);
-        assert.ok(Math.min(...window.min) <= -220);
-      }
+      assert.ok(Math.max(...window.max) >= 250);
+      assert.ok(Math.min(...window.min) <= -220);
+      assert.ok(envelopeCoversSamples(samples, samples.length, 0, 1, window));
     }
   });
 
@@ -116,17 +141,16 @@ describe("display-resolution waveform rendering", () => {
     // Put a transient in the final source bin. A stale 20-second display
     // window would incorrectly return a zero-valued tail instead.
     samples[samples.length - 1] = 123;
-    const window = traceWindow(samples, 250, 0, 60, 1500);
+    const window = envelopeTraceWindow(samples, 250, 0, 60, 1500);
     assert.equal(window.mode, "envelope");
-    if (window.mode === "envelope") {
-      assert.equal(window.sampleCount.length, 1500);
-      assert.equal(window.first[0], 1);
-      assert.equal(window.last.at(-1), 123);
-      assert.equal(window.max.at(-1), 123);
-      const tail = orderedEnvelopePoints(window, 1499, 1500);
-      assert.equal(tail[0]?.x, 1499);
-      assert.ok(tail.some((point) => point.value === 123));
-    }
+    assert.equal(window.sampleCount.length, 1500);
+    assert.equal(window.first[0], 1);
+    assert.equal(window.last.at(-1), 123);
+    assert.equal(window.max.at(-1), 123);
+    const tail = orderedEnvelopePoints(window, 1499, 1500);
+    assert.equal(tail[0]?.x, 1499);
+    assert.ok(tail.some((point) => point.value === 123));
+    assert.ok(envelopeCoversSamples(samples, 250, 0, 60, window));
   });
 
   it("caches EKG display profiles by immutable sample identity", () => {

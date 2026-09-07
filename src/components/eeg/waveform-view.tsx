@@ -20,12 +20,13 @@ import {
 } from "@/lib/eeg/annotation-layout";
 import {
   cachedEkgDisplayProfile,
-  envelopeWhiskers,
   envelopeTraceWindow,
   mapTraceWindow,
-  representativeEnvelopePoints,
+  peakHoldColumns,
   traceWindow,
   waveformInvalidationKey,
+  type EnvelopeTraceWindow,
+  type NativeTraceWindow,
   type TraceWindow,
 } from "@/lib/eeg/rendering";
 import {
@@ -368,7 +369,7 @@ function clearWaveformCanvas(ctx: CanvasRenderingContext2D, cssW: number, cssH: 
 
 function drawNativeTrace(
   ctx: CanvasRenderingContext2D,
-  window: Extract<TraceWindow, { mode: "native" }>,
+  window: NativeTraceWindow,
   sampleRate: number,
   x0: number,
   span: number,
@@ -390,6 +391,32 @@ function drawNativeTrace(
   ctx.stroke();
 }
 
+function drawPeakHoldEnvelope(
+  ctx: CanvasRenderingContext2D,
+  window: EnvelopeTraceWindow,
+  x0: number,
+  plotW: number,
+  mid: number,
+  scale: number,
+  sign: number,
+  color: string,
+  alpha: number,
+  offset = 0,
+) {
+  const dpr = ctx.getTransform().a || 1;
+  const minPx = 1 / dpr;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = alpha;
+  for (const column of peakHoldColumns(window, plotW)) {
+    const yA = mid + sign * (column.min - offset) * scale;
+    const yB = mid + sign * (column.max - offset) * scale;
+    const top = Math.min(yA, yB);
+    const height = Math.max(minPx, Math.abs(yB - yA));
+    ctx.fillRect(x0 + column.x, top, Math.max(column.width, minPx), height);
+  }
+  ctx.globalAlpha = 1;
+}
+
 function drawLane(
   ctx: CanvasRenderingContext2D,
   trace: TraceWindow,
@@ -408,8 +435,6 @@ function drawLane(
 ) {
   ctx.globalAlpha = alpha;
   ctx.strokeStyle = color;
-  // Clinical traces benefit from a restrained, crisp stroke. Rounded caps on
-  // every extrema bar made dense views look like filled ink.
   ctx.lineJoin = "miter";
   ctx.lineCap = "butt";
   ctx.lineWidth = Math.max(0.8, 0.95 * weight);
@@ -418,33 +443,9 @@ function drawLane(
     ctx.globalAlpha = 1;
     return;
   }
-  // Keep a normal-weight continuous first/last morphology trace. Extrema are
-  // rendered as restrained source-positioned whiskers below so dense periodic
-  // signals do not become an opaque saturated block.
-  ctx.beginPath();
-  for (let p = 0; p < trace.min.length; p++) {
-    const points = representativeEnvelopePoints(trace, p, plotW);
-    for (const point of points) {
-      const y = mid + sign * (point.value - offset) * scale;
-      if (p === 0 && point === points[0]) ctx.moveTo(x0 + point.x, y);
-      else ctx.lineTo(x0 + point.x, y);
-    }
-  }
-  ctx.stroke();
-
-  // A low-alpha whisker at each source-positioned extremum preserves brief
-  // transients without drawing a fully connected min/max envelope.
-  ctx.globalAlpha = alpha * 0.28;
-  ctx.lineWidth = Math.max(0.7, 0.8 * weight);
-  ctx.beginPath();
-  for (let p = 0; p < trace.min.length; p++) {
-    for (const whisker of envelopeWhiskers(trace, p, plotW)) {
-      ctx.moveTo(x0 + whisker.x, mid + sign * (whisker.from - offset) * scale);
-      ctx.lineTo(x0 + whisker.x, mid + sign * (whisker.to - offset) * scale);
-    }
-  }
-  ctx.stroke();
-  ctx.globalAlpha = 1;
+  // Peak-hold columns: every source sample in a pixel contributes to that
+  // pixel's min and max, so transients keep their true amplitude.
+  drawPeakHoldEnvelope(ctx, trace, x0, plotW, mid, scale, sign, color, alpha, offset);
 }
 
 /**
@@ -804,7 +805,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
             dsaSig = "";
           }
           const sig = waveformInvalidationKey({
-            dataRevision: s.segment,
+            dataRevision: s.displaySegment ?? s.segment,
             trackIds: editorList.map((track) => `${track.id}:${track.sampleRate}`),
             viewStart: Number(viewStart.toFixed(4)),
             viewDuration: Number(viewDur.toFixed(4)),
@@ -813,7 +814,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
             width: cssW,
             height: cssH,
             dpr,
-            trackStateKey: `${effectiveTheme}|` + Object.values(s.tracks)
+            trackStateKey: `${effectiveTheme}|rev:${s.displayRevision}|` + Object.values(s.tracks)
               .map((tr) => `${tr.id}:${tr.mute ? 1 : 0}${tr.solo ? 1 : 0}`)
               .join(",") + `|hidden:${s.hiddenTrackIds.join(",")}`,
           });
@@ -1455,8 +1456,8 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
             <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 px-6 text-center">
             <p className="font-display text-xl tracking-tight text-fg">Auris</p>
             <p className="max-w-sm text-pretty text-sm text-muted">
-              Open a deidentified EDF/EDF+ file, or load the demo tracing. All processing stays in
-              this browser.
+              Open a deidentified EDF/EDF+ file. The bundled recording loads automatically, and all
+              processing stays in this browser.
             </p>
             </div>
           )}
@@ -1842,53 +1843,15 @@ function drawOverviewWaves(
     const raw = envelopeTraceWindow(tr.samples, tr.sampleRate, 0, total, nPix);
     const profile = tr.kind === "ekg" ? cachedEkgDisplayProfile(tr.samples) : null;
     const display = profile
-      ? {
-          min: Float32Array.from(raw.min, (value) =>
-            Math.max(-profile.clipUv, Math.min(profile.clipUv, value - profile.baselineUv)),
-          ),
-          max: Float32Array.from(raw.max, (value) =>
-            Math.max(-profile.clipUv, Math.min(profile.clipUv, value - profile.baselineUv)),
-          ),
-        }
+      ? mapTraceWindow(raw, (value) =>
+          Math.max(-profile.clipUv, Math.min(profile.clipUv, value - profile.baselineUv)),
+        )
       : raw;
     const scale = displayScaleForChannel(rowHeight, s.sensitivityUv, tr.kind, profile);
-    ctx.strokeStyle = traceColorForLane(laneGroup(tr, i, list), tr.kind, lat, tr.id, theme);
-    // The overview is a navigation aid, not a full-resolution trace. Drawing
-    // a min/max bar at every pixel turns dense recordings into a solid block
-    // of color, so use a light connected envelope and only a sparse set of
-    // whiskers for brief transients.
-    ctx.globalAlpha = 0.42;
-    ctx.lineWidth = 0.8;
-    ctx.lineJoin = "round";
-    ctx.lineCap = "butt";
-    ctx.beginPath();
-    for (let p = 0; p < display.min.length; p++) {
-      const x = ((p + 0.5) / display.min.length) * cssW;
-      const y = mid + sign * display.min[p]! * scale;
-      if (p === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-    ctx.beginPath();
-    for (let p = 0; p < display.max.length; p++) {
-      const x = ((p + 0.5) / display.max.length) * cssW;
-      const y = mid + sign * display.max[p]! * scale;
-      if (p === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-
-    ctx.globalAlpha = 0.18;
-    ctx.lineWidth = 0.7;
-    ctx.beginPath();
-    const whiskerStride = Math.max(1, Math.ceil(display.min.length / Math.max(1, cssW / 4)));
-    for (let p = 0; p < display.min.length; p += whiskerStride) {
-      const x = ((p + 0.5) / display.min.length) * cssW;
-      ctx.moveTo(x, mid + sign * display.min[p]! * scale);
-      ctx.lineTo(x, mid + sign * display.max[p]! * scale);
-    }
-    ctx.stroke();
-    ctx.globalAlpha = 1;
+    const color = traceColorForLane(laneGroup(tr, i, list), tr.kind, lat, tr.id, theme);
+    if (display.mode !== "envelope") return;
+    // Peak-hold overview: every sample in a pixel still contributes to min/max.
+    drawPeakHoldEnvelope(ctx, display, 0, cssW, mid, scale, sign, color, 0.55);
   });
   ctx.fillStyle = palette.muted;
   ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";

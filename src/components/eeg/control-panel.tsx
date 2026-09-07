@@ -10,7 +10,7 @@ import {
 } from "@/lib/eeg/defaults";
 import { STANDARD_ELECTRODES } from "@/lib/eeg/montages";
 import { sampleRateSummary } from "@/lib/eeg/edf";
-import { buildSyntheticEdf } from "@/lib/eeg/synthetic";
+import { fetchDefaultRecording } from "@/lib/eeg/default-recording";
 import { VIEW_PRESETS } from "@/lib/eeg/view";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -158,7 +158,8 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
                     size="sm"
                     variant="secondary"
                     onClick={async () => {
-                      await loadFile(buildSyntheticEdf({ duration: 60 }), "synthetic-training.edf");
+                      const bundled = await fetchDefaultRecording();
+                      await loadFile(bundled.buffer, bundled.name);
                     }}
                   >
                     Load demo
