@@ -9,6 +9,9 @@ export const DEFAULT_FILTERS: FilterSettings = {
   hff: 70,
   notch60: true,
   removeDc: true,
+  artifactReduction: false,
+  ica: false,
+  spatialFilter: false,
 };
 
 export const DEFAULT_SONIFY: SonifySettings = {

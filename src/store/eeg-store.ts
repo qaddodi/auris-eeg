@@ -239,6 +239,9 @@ const RAW_FILTERS: FilterSettings = {
   hff: 0,
   notch60: false,
   removeDc: false,
+  artifactReduction: false,
+  ica: false,
+  spatialFilter: false,
 };
 
 const rawMontageCache = new WeakMap<ArrayBuffer, Map<string, SegmentData>>();
@@ -1267,6 +1270,9 @@ const EVIDENCE_FILTERS: FilterSettings = {
   hff: 0,
   notch60: false,
   removeDc: false,
+  artifactReduction: false,
+  ica: false,
+  spatialFilter: false,
 };
 
 function evidenceForRecording(recording: LoadedRecording): {

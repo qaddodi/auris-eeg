@@ -431,6 +431,9 @@ describe("filters", () => {
       hff: 0,
       notch60: true,
       removeDc: true,
+      artifactReduction: false,
+      ica: false,
+      spatialFilter: false,
     });
     assert.equal(hasNan(y), false);
     assert.equal(y.length, x.length);

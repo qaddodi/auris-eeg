@@ -84,7 +84,7 @@ describe("mixed rates and source immutability", () => {
   it("filters into a new buffer and rejects cutoffs at Nyquist", () => {
     const input = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
     const original = new Float32Array(input);
-    const base = { bandpass: false, bandpassLow: 1, bandpassHigh: 40, lff: 0, hff: 0, notch60: false, removeDc: true };
+    const base = { bandpass: false, bandpassLow: 1, bandpassHigh: 40, lff: 0, hff: 0, notch60: false, removeDc: true, artifactReduction: false, ica: false, spatialFilter: false };
     const output = applyFilters(input, 200, base);
     assert.notEqual(output, input);
     assert.deepEqual(input, original);

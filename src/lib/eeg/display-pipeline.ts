@@ -1,4 +1,5 @@
 import { applyFilters } from "./preprocessing.ts";
+import { applySpatialCleaning, spatialCleaningEnabled } from "./spatial-clean.ts";
 import type { FilterSettings, ProcessedTrack } from "./types.ts";
 
 export interface ProcessedWindow {
@@ -36,7 +37,8 @@ export function planDisplayWindow(
       ? filters.bandpassLow
       : 0;
   const filterMargin = activeLow > 0 ? Math.min(30, Math.max(2, 3 / activeLow)) : 2;
-  const margin = Math.max(filterMargin, duration);
+  const icaMargin = filters.ica ? 4 : 0;
+  const margin = Math.max(filterMargin, icaMargin, duration);
   const plannedStart = Math.max(0, start - margin);
   const plannedEnd = Math.min(total, start + duration + margin);
   return {
@@ -103,5 +105,6 @@ export function buildDisplayWindow(
       }),
     };
   });
-  return { start, duration, tracks, dcOffsets };
+  const cleaned = spatialCleaningEnabled(filters) ? applySpatialCleaning(tracks, filters) : tracks;
+  return { start, duration, tracks: cleaned, dcOffsets };
 }

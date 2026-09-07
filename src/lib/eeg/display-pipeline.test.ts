@@ -16,6 +16,9 @@ const noFilters: FilterSettings = {
   hff: 0,
   notch60: false,
   removeDc: false,
+  artifactReduction: false,
+  ica: false,
+  spatialFilter: false,
 };
 
 function track(id: string, samples: number[]): ProcessedTrack {
@@ -109,5 +112,43 @@ describe("display processing windows", () => {
     });
     assert.deepEqual(source.tracks[0]!.samples, before);
     assert.ok(outputs.some((output) => output.some((value, index) => value !== outputs[0]![index])));
+  });
+
+  it("applies EOG regression on the display window without mutating montage samples", () => {
+    const fs = 200;
+    const n = 400;
+    const neural = Array.from({ length: n }, (_, i) => Math.sin((2 * Math.PI * 10 * i) / fs) * 20);
+    const blink = Array.from({ length: n }, (_, i) => Math.sin((2 * Math.PI * 2 * i) / fs) * 80);
+    const source = {
+      start: 0,
+      duration: 2,
+      tracks: [
+        {
+          id: "F3",
+          label: "F3",
+          laterality: "left" as const,
+          kind: "eeg" as const,
+          sampleRate: fs,
+          samples: Float32Array.from(neural.map((value, i) => value + 0.5 * blink[i]!)),
+        },
+        {
+          id: "EOG",
+          label: "EOG L–R",
+          laterality: "midline" as const,
+          kind: "eog" as const,
+          sampleRate: fs,
+          samples: Float32Array.from(blink),
+        },
+      ],
+    };
+    const before = new Float32Array(source.tracks[0]!.samples);
+    const output = buildDisplayWindow(
+      source,
+      { start: 0, duration: 2, visibleStart: 0, visibleDuration: 2 },
+      { ...noFilters, artifactReduction: true },
+    );
+    assert.deepEqual([...source.tracks[0]!.samples], [...before]);
+    assert.deepEqual([...output.tracks[1]!.samples], [...source.tracks[1]!.samples]);
+    assert.notEqual(output.tracks[0]!.samples[10], source.tracks[0]!.samples[10]);
   });
 });

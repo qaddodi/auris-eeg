@@ -11,6 +11,7 @@ import {
 import { STANDARD_ELECTRODES } from "@/lib/eeg/montages";
 import { sampleRateSummary } from "@/lib/eeg/edf";
 import { fetchDefaultRecording } from "@/lib/eeg/default-recording";
+import { describeNoiseReferences } from "@/lib/eeg/spatial-clean";
 import { VIEW_PRESETS } from "@/lib/eeg/view";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -42,6 +43,7 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
   const seekEeg = useEegStore((s) => s.seekEeg);
   const filters = useEegStore((s) => s.filters);
   const setFilters = useEegStore((s) => s.setFilters);
+  const displaySegment = useEegStore((s) => s.displaySegment);
   const sonify = useEegStore((s) => s.sonify);
   const setSonify = useEegStore((s) => s.setSonify);
   const soundMode = useEegStore((s) => s.soundMode);
@@ -627,6 +629,60 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
                 Notch 60 Hz
                 <input type="checkbox" checked={filters.notch60} onChange={(e) => setFilters({ notch60: e.target.checked })} className="size-4 accent-accent" />
               </label>
+            </section>
+
+            <Separator />
+
+            <section className="space-y-3 p-4">
+              <p className="text-[0.6875rem] font-medium uppercase tracking-wider text-subtle">
+                Artifact cleaning
+              </p>
+              <p className="text-xs text-pretty text-muted">
+                Display-only. These algorithms use EOG and EMG (or frontal Fp leads as ocular
+                proxies) to subtract noise from EEG traces. Raw samples, analysis, and
+                sonification are not changed. This is not a diagnostic artifact-rejection system.
+              </p>
+              <p className="text-xs text-pretty text-muted">
+                {describeNoiseReferences(displaySegment?.tracks ?? []).summary}
+              </p>
+              <label className="flex items-center justify-between gap-3 text-sm">
+                Artifact reduction
+                <input
+                  type="checkbox"
+                  checked={filters.artifactReduction}
+                  onChange={(e) => setFilters({ artifactReduction: e.target.checked })}
+                  className="size-4 accent-accent"
+                />
+              </label>
+              <p className="text-[0.6875rem] leading-5 text-subtle">
+                Least-squares regression of EOG/EMG onto each EEG lead, then subtract.
+              </p>
+              <label className="flex items-center justify-between gap-3 text-sm">
+                ICA
+                <input
+                  type="checkbox"
+                  checked={filters.ica}
+                  onChange={(e) => setFilters({ ica: e.target.checked })}
+                  className="size-4 accent-accent"
+                />
+              </label>
+              <p className="text-[0.6875rem] leading-5 text-subtle">
+                FastICA; independent components correlated with EOG/EMG are zeroed and the EEG is
+                reconstructed.
+              </p>
+              <label className="flex items-center justify-between gap-3 text-sm">
+                Spatial filter
+                <input
+                  type="checkbox"
+                  checked={filters.spatialFilter}
+                  onChange={(e) => setFilters({ spatialFilter: e.target.checked })}
+                  className="size-4 accent-accent"
+                />
+              </label>
+              <p className="text-[0.6875rem] leading-5 text-subtle">
+                Project out the shared EOG/EMG spatial pattern across EEG leads. Falls back to a
+                common average if no noise references are present.
+              </p>
             </section>
           </>
         )}

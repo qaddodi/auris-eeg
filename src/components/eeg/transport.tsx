@@ -9,10 +9,13 @@ import {
   Expand,
   Eye,
   EyeOff,
+  Eraser,
   Filter,
+  GitBranch,
   Hand,
   Info,
   Keyboard,
+  Layers,
   Lightbulb,
   Lock,
   PanelLeft,
@@ -212,6 +215,15 @@ export function Transport({
           </label>
           <Button size="sm" variant={filters.notch60 ? "default" : "ghost"} className={toolClass} aria-label={filters.notch60 ? "Disable 60 Hz notch filter" : "Enable 60 Hz notch filter"} aria-pressed={filters.notch60} title={filters.notch60 ? "Disable 60 Hz notch filter" : "Enable 60 Hz notch filter"} onClick={() => setFilters({ notch60: !filters.notch60 })}>
             <Filter aria-hidden="true" /> NOTCH 60Hz
+          </Button>
+          <Button size="sm" variant={filters.artifactReduction ? "default" : "ghost"} className={toolClass} aria-pressed={filters.artifactReduction} title="Display-only: subtract EOG/EMG from EEG by least-squares regression" aria-label={filters.artifactReduction ? "Disable artifact reduction" : "Enable artifact reduction"} onClick={() => setFilters({ artifactReduction: !filters.artifactReduction })}>
+            <Eraser aria-hidden="true" /> Artifact
+          </Button>
+          <Button size="sm" variant={filters.ica ? "default" : "ghost"} className={toolClass} aria-pressed={filters.ica} title="Display-only: reject ICA components correlated with EOG/EMG" aria-label={filters.ica ? "Disable ICA" : "Enable ICA"} onClick={() => setFilters({ ica: !filters.ica })}>
+            <GitBranch aria-hidden="true" /> ICA
+          </Button>
+          <Button size="sm" variant={filters.spatialFilter ? "default" : "ghost"} className={toolClass} aria-pressed={filters.spatialFilter} title="Display-only: project out the shared EOG/EMG spatial pattern" aria-label={filters.spatialFilter ? "Disable spatial filter" : "Enable spatial filter"} onClick={() => setFilters({ spatialFilter: !filters.spatialFilter })}>
+            <Layers aria-hidden="true" /> Spatial
           </Button>
           <select className={`${selectClass} w-[5.5rem]`} aria-label="EEG sensitivity" title="EEG sensitivity" value={sensitivity} onChange={(event) => setSensitivity(Number(event.currentTarget.value))}>
             {SENSITIVITY_PRESETS.map((value) => <option key={value} value={value}>{value} µV/mm</option>)}

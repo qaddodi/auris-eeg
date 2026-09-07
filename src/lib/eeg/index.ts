@@ -3,6 +3,7 @@ export * from "./channels.ts";
 export * from "./edf.ts";
 export * from "./montages.ts";
 export * from "./preprocessing.ts";
+export * from "./spatial-clean.ts";
 export * from "./sonify.ts";
 export * from "./stereo.ts";
 export * from "./audio.ts";

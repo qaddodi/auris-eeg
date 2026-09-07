@@ -24,7 +24,8 @@ Pages site, with no account, upload, database, or cross-device session model.
 The product supports referential, longitudinal bipolar, transverse, and custom
 derivations; EEG, EKG, EOG, EMG, and other trace classification; mute/solo/gain
 and stereo routing; overview plus zoomed waveform navigation; calipers;
-keyboard transport; DSA; and JSON annotation import/export.
+keyboard transport; DSA; optional display-only EOG/EMG artifact reduction,
+ICA, and spatial filtering; and JSON annotation import/export.
 
 ## Claims and sound modes
 

@@ -25,6 +25,11 @@ and user-defined pairs are represented as explicit derivations. A bipolar pair
 is available only when its source rates and lengths are compatible. Filters
 reject invalid cutoff/rate combinations and return new arrays.
 
+Optional display-only Artifact Reduction, ICA, and Spatial Filter use EOG and
+EMG (or frontal Fp leads as ocular proxies) to subtract noise from EEG traces
+after LFF/HFF/notch. They never write the raw montage, analysis, or audio
+branches, and they are not a diagnostic artifact-rejection system.
+
 Waveforms use the display branch. Review pages plot every calibrated sample at
 its true time as a polyline (native mode) so no point is dropped before
 filtering. When a window is both denser than one sample per pixel and longer
@@ -43,6 +48,7 @@ and optional known track IDs. Imported data is marked as `file`; suggestions
 are marked `auto`; user edits are marked `user`. Nothing is persisted by the
 reader, and the source file stays in browser memory for the session.
 
-The reader is not a clinical viewer. It does not promise artifact rejection,
+The reader is not a clinical viewer. Optional EOG/EMG display cleaning is an
+educational aid, not validated artifact rejection. The reader does not promise
 impedance data, clinical reports, or diagnostic interpretation. Deidentify
 files before opening them.

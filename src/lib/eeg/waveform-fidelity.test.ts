@@ -98,6 +98,9 @@ describe("bundled recording waveform fidelity", () => {
       hff: 0,
       notch60: false,
       removeDc: false,
+      artifactReduction: false,
+      ica: false,
+      spatialFilter: false,
     });
     assert.equal(unfiltered.length, raw.length);
     for (let i = 0; i < raw.length; i++) assert.equal(unfiltered[i], raw[i]);
