@@ -122,11 +122,11 @@ export interface FilterSettings {
   notch60: boolean;
   removeDc: boolean;
   /** Display-only least-squares subtraction of EOG/EMG (or Fp proxies). */
-  artifactReduction: boolean;
+  artifactReduction?: boolean;
   /** Display-only FastICA; noise ICs are those correlated with EOG/EMG. */
-  ica: boolean;
+  ica?: boolean;
   /** Display-only spatial projection of the EOG/EMG pattern (CAR if no refs). */
-  spatialFilter: boolean;
+  spatialFilter?: boolean;
 }
 
 export interface SonifySettings {
