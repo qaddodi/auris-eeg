@@ -254,7 +254,7 @@ function median(values: readonly number[]): number {
   return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 }
 
-function resample(values: readonly number[], fromRate: number, toRate: number): Float32Array {
+function resample(values: ArrayLike<number>, fromRate: number, toRate: number): Float32Array {
   if (values.length === 0) return new Float32Array();
   if (Math.abs(fromRate - toRate) < 1e-9) return Float32Array.from(values);
   const length = Math.max(1, Math.round((values.length - 1) * toRate / fromRate) + 1);
@@ -269,14 +269,15 @@ function resample(values: readonly number[], fromRate: number, toRate: number): 
   return output;
 }
 
-function normalizeChannel(values: readonly number[]): Float32Array {
-  const finite = values.filter((value) => Number.isFinite(value));
+function normalizeChannel(values: ArrayLike<number>): Float32Array {
+  const source = Array.from(values);
+  const finite = source.filter((value) => Number.isFinite(value));
   const center = median(finite);
   const deviations = finite.map((value) => Math.abs(value - center));
   const scale = Math.max(1e-9, median(deviations) * 1.4826);
-  const output = new Float32Array(values.length);
-  for (let index = 0; index < values.length; index += 1) {
-    const value = Number.isFinite(values[index]) ? (values[index] - center) / scale : 0;
+  const output = new Float32Array(source.length);
+  for (let index = 0; index < source.length; index += 1) {
+    const value = Number.isFinite(source[index]) ? (source[index] - center) / scale : 0;
     output[index] = Math.max(-8, Math.min(8, value));
   }
   return output;

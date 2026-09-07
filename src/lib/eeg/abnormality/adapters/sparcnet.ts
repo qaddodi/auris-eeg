@@ -676,7 +676,7 @@ export async function createSparcnetAdapterFromConfig(
   config: UserSuppliedLocalModelConfig,
   signal: AbortSignal = new AbortController().signal,
 ): Promise<SparcnetAdapter> {
-  if (!config || config.classification === "validated-model") {
+  if (!config) {
     throw new SparcnetConfigurationError(
       "SPaRCNet must be registered as an experimental or imported-local user-supplied model.",
     );

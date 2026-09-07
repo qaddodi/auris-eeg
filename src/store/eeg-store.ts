@@ -980,9 +980,10 @@ export const useEegStore = create<AppState>((set, get) => {
         const registered = listDetectors();
         set({ findingModels: registered });
         const latest = get();
-        if (latest.findingRunId !== runId || controller.signal.aborted) return;
+        if (latest.findingRunId !== runId || controller.signal.aborted || !latest.recording || !latest.analysisSegment) return;
+        const recording = latest.recording;
         set({ findingRunStatus: "running", findingProgress: { completed: 0, total: 1, phase: "preprocessing", message: "Preparing calibrated signals…" } });
-        const detectorInput = buildDetectorSignalInput(latest.recording);
+        const detectorInput = buildDetectorSignalInput(recording);
         if (!detectorInput.signals.length) {
           throw new Error("No recoverable referential EEG electrodes are available for local screening. Bipolar-only channels cannot be reconstructed safely.");
         }
@@ -1003,7 +1004,7 @@ export const useEegStore = create<AppState>((set, get) => {
               findingWorkerClient ??= AbnormalityWorkerClient.createDefault();
               return findingWorkerClient.run(
                 DETERMINISTIC_DETECTOR.id,
-                { recording: recordingIdentity(latest.recording), inputs: [inferenceInput] },
+                { recording: recordingIdentity(recording), inputs: [inferenceInput] },
                 {
                   signal: controller.signal,
                   cache: findingInferenceCache,
@@ -1014,7 +1015,7 @@ export const useEegStore = create<AppState>((set, get) => {
               );
             })()
           : await runAbnormalityAnalysis({
-              recording: recordingIdentity(latest.recording),
+              recording: recordingIdentity(recording),
               input: inferenceInput,
               enabledDetectorIds: enabled,
               signal: controller.signal,
@@ -1057,7 +1058,7 @@ export const useEegStore = create<AppState>((set, get) => {
         set({ selectedFindingId: null });
         return;
       }
-      set({ selectedFindingId: id, focusedTrackIds: finding.displayedDerivations.map((item) => item.id) });
+      set({ selectedFindingId: id });
       get().setView(finding.interval.start, Math.max(1, finding.interval.end - finding.interval.start), { manual: true });
       get().seekEeg(finding.interval.start, "programmatic");
     },
