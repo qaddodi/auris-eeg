@@ -251,6 +251,10 @@ export function WaveformView() {
     x0: number;
     start0: number;
     dur0: number;
+    /** Time under the pointer when a pan gesture began; used for click-to-seek. */
+    clickTime?: number;
+    /** Set once the pointer has moved far enough to be considered a drag. */
+    moved?: boolean;
   }>(null);
   const caliperRef = useRef<{ a: number; b: number; trackId: string | null } | null>(null);
   const paintRef = useRef<() => void>(() => {});
@@ -558,7 +562,14 @@ export function WaveformView() {
     // The pan tool is deliberately separate from pointer/scrub: dragging the
     // trace moves the review window without changing the EEG cursor.
     if ((s.tool as string) === "pan") {
-      dragRef.current = { kind: "editor-pan", x0: e.clientX, start0: vs, dur0: s.viewDuration };
+      dragRef.current = {
+        kind: "editor-pan",
+        x0: e.clientX,
+        start0: vs,
+        dur0: s.viewDuration,
+        clickTime: t,
+        moved: false,
+      };
       return;
     }
     if (s.tool === "annotate") {
@@ -700,6 +711,14 @@ export function WaveformView() {
       return;
     }
     if (drag.kind === "editor-pan" && wrapRef.current) {
+      // A pan-tool click should seek, but a real drag should only move the
+      // viewport. Ignore the small pointer jitter that commonly occurs
+      // between pointerdown and pointerup on a click.
+      if (!drag.moved) {
+        const dx = e.clientX - drag.x0;
+        if (Math.abs(dx) < 5) return;
+        drag.moved = true;
+      }
       const rect = wrapRef.current.getBoundingClientRect();
       const plotW = Math.max(1, (surfaceRef.current?.clientWidth ?? rect.width) - GUTTER);
       // Content follows the pointer: dragging right reveals earlier time.
@@ -751,6 +770,10 @@ export function WaveformView() {
   };
 
   const onPointerUp = () => {
+    const drag = dragRef.current;
+    if (drag?.kind === "editor-pan" && !drag.moved && drag.clickTime !== undefined) {
+      seekEeg(drag.clickTime, "user");
+    }
     dragRef.current = null;
     playback.endScrub();
   };
