@@ -25,7 +25,11 @@ import {
   waveformInvalidationKey,
   type TraceWindow,
 } from "@/lib/eeg/rendering";
-import { stableTraceColor } from "@/lib/eeg/colors";
+import {
+  AUX_TRACE_COLORS,
+  EEG_CHAIN_COLORS,
+  stableTraceColor,
+} from "@/lib/eeg/colors";
 import { dsaRgb, dsaUnit, type DsaFrame } from "@/lib/eeg/spectrum";
 import { eegNow, useEegStore } from "@/store/eeg-store";
 
@@ -44,11 +48,11 @@ const EVENT_LANE = 18;
 // Hidden channels retain their ordered slot, but only need enough room for
 // the compact gutter affordance. The remaining plot height is redistributed
 // across visible channels by laneLayout.
-const HIDDEN_LANE_HEIGHT = 26;
-const MIN_VISIBLE_LANE_HEIGHT = 28;
-const TARGET_VISIBLE_LANE_HEIGHT = 44;
-const MAX_VISIBLE_LANE_HEIGHT = 62;
-const CHAIN_GAP = 11;
+const HIDDEN_LANE_HEIGHT = 24;
+const MIN_VISIBLE_LANE_HEIGHT = 32;
+const TARGET_VISIBLE_LANE_HEIGHT = 36;
+const MAX_VISIBLE_LANE_HEIGHT = 42;
+const CHAIN_GAP = 7;
 
 /** Keep the montage's related derivations together without hiding any valid
  * clinical channels. Auxiliary channels form a separate visual band and EKG
@@ -83,18 +87,57 @@ interface LaneRect {
   height: number;
 }
 
+const NATUS_CHAIN_BY_PAIR: Record<string, string> = {
+  "FP1-F7": "banana:left-temporal",
+  "F7-T3": "banana:left-temporal",
+  "T3-T5": "banana:left-temporal",
+  "T5-O1": "banana:left-temporal",
+  "FP1-F3": "banana:left-parasagittal",
+  "F3-C3": "banana:left-parasagittal",
+  "C3-P3": "banana:left-parasagittal",
+  "P3-O1": "banana:left-parasagittal",
+  "FZ-CZ": "banana:midline",
+  "CZ-PZ": "banana:midline",
+  "FP2-F4": "banana:right-parasagittal",
+  "F4-C4": "banana:right-parasagittal",
+  "C4-P4": "banana:right-parasagittal",
+  "P4-O2": "banana:right-parasagittal",
+  "FP2-F8": "banana:right-temporal",
+  "F8-T4": "banana:right-temporal",
+  "T4-T6": "banana:right-temporal",
+  "T6-O2": "banana:right-temporal",
+};
+
 function laneGroup(track: ProcessedTrack, index: number, list: ProcessedTrack[]): string {
   if (track.kind === "ekg") return "ekg";
   if (track.kind !== "eeg") return `aux:${track.kind}`;
   if (!track.id.startsWith("banana:")) return "eeg";
+  // Use the derivation identity first so a sparse recording or a future
+  // montage ordering change cannot make one longitudinal chain split colors.
+  const pair = track.id.slice("banana:".length).toUpperCase().replace(/–/g, "-");
+  const explicit = NATUS_CHAIN_BY_PAIR[pair];
+  if (explicit) return explicit;
+  // Keep a safe ordered fallback for legacy/unknown banana identities.
   const bananaIndex = list.findIndex((candidate) => candidate.id === track.id);
-  // The double-banana definition is five four-channel chains, with a
-  // two-channel midline chain in the middle.
   if (bananaIndex < 4) return "banana:left-temporal";
   if (bananaIndex < 8) return "banana:left-parasagittal";
   if (bananaIndex < 10) return "banana:midline";
   if (bananaIndex < 14) return "banana:right-parasagittal";
   return "banana:right-temporal";
+}
+
+function traceColorForLane(
+  group: string,
+  kind: ProcessedTrack["kind"],
+  laterality: ProcessedTrack["laterality"],
+  id: string,
+): string {
+  if (kind !== "eeg") return AUX_TRACE_COLORS[kind] ?? stableTraceColor(id, kind, laterality);
+  const chain = group.replace(/^banana:/, "") as keyof typeof EEG_CHAIN_COLORS;
+  if (group.startsWith("banana:") && chain in EEG_CHAIN_COLORS) {
+    return EEG_CHAIN_COLORS[chain];
+  }
+  return stableTraceColor(id, kind, laterality);
 }
 
 function laneLayout(
@@ -1147,7 +1190,7 @@ function drawEditor(
     const st = s.tracks[tr.id];
     const live = audible.has(tr.id);
     const lat = st?.lateralityOverride ?? tr.laterality;
-    const color = stableTraceColor(tr.id, tr.kind, lat);
+    const color = traceColorForLane(laneGroup(tr, i, list), tr.kind, lat, tr.id);
     const hovered = hoveredTrackId === tr.id;
     const focused = s.focusedTrackIds.length === 0 || s.focusedTrackIds.includes(tr.id);
     const alpha = focused
@@ -1431,7 +1474,7 @@ function drawOverviewWaves(
       : raw;
     const scale = displayScaleForChannel(rowHeight, s.sensitivityUv, tr.kind, profile);
     ctx.globalAlpha = 0.9;
-    ctx.strokeStyle = stableTraceColor(tr.id, tr.kind, lat);
+    ctx.strokeStyle = traceColorForLane(laneGroup(tr, i, list), tr.kind, lat, tr.id);
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let p = 0; p < display.min.length; p++) {
@@ -1654,57 +1697,82 @@ function TrackGutter({
   const toggleTrackVisibility = useEegStore((s) => s.toggleTrackVisibility);
   const focused = useEegStore((s) => s.focusedTrackIds.length === 0 || s.focusedTrackIds.includes(track.id));
   const lat = st?.lateralityOverride ?? track.laterality;
-  const color = stableTraceColor(track.id, track.kind, lat);
+  const color = traceColorForLane(group, track.kind, lat, track.id);
   const muted = Boolean(st?.mute);
   const solo = Boolean(st?.solo);
   return (
     <div
       className={cn(
-        "pointer-events-auto absolute left-0 right-0 flex items-center gap-1 border-b border-border/50 px-1.5",
+        "pointer-events-auto absolute left-0 right-0 flex items-center gap-1 overflow-hidden border-b border-border/50 px-1.5",
         previous && displayBand(previous) !== displayBand(track) && "border-t-2 border-accent/30",
         previousGroup && previousGroup !== group && displayBand(previous!) === displayBand(track) && "border-t border-accent/35",
         focused && "bg-accent/8",
         hidden && "opacity-50",
+        "border-l-2",
       )}
-      style={lane ? { top: lane.top, height: lane.height } : { height: `${100 / count}%` }}
+      style={{ ...(lane ? { top: lane.top, height: lane.height } : { height: `${100 / count}%` }), borderLeftColor: color }}
     >
-      <span
-        className="size-2 shrink-0 rounded-full"
-        style={{ background: color }}
-        aria-hidden="true"
-      />
-      <button
-        type="button"
-        title={hidden ? "Show channel" : "Hide channel"}
-        aria-label={`${hidden ? "Show" : "Hide"} ${track.label}`}
-        aria-pressed={hidden}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={() => toggleTrackVisibility(track.id)}
-        className={cn(
-          "grid h-6 min-w-6 shrink-0 place-items-center rounded-sm text-subtle hover:text-fg",
-          hidden ? "bg-surface-2" : "bg-transparent",
-        )}
-      >
-        {hidden ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-      </button>
       {hidden ? (
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-1">
-            <span className="whitespace-nowrap font-mono text-[0.7rem] font-semibold leading-tight tracking-tight text-fg" style={{ color }} title={track.label}>
-              {track.label}
-            </span>
-            <span className="shrink-0 text-[0.5625rem] uppercase tracking-wide text-subtle">Hidden</span>
-          </div>
-        </div>
-      ) : (
         <>
           <button
             type="button"
-            title="Solo — multiple tracks can be soloed. Double-click for exclusive."
+            title="Show channel"
+            aria-label={`Show ${track.label}`}
+            aria-pressed
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => toggleTrackVisibility(track.id)}
+            className="grid size-5 shrink-0 place-items-center rounded-sm bg-surface-2 text-subtle hover:text-fg"
+          >
+            <EyeOff className="size-3" />
+          </button>
+          <span
+            className="shrink-0 whitespace-nowrap font-mono text-[0.75rem] font-bold leading-none tracking-tight text-fg"
+            title={track.label}
+          >
+            {track.label}
+          </span>
+          <span className="shrink-0 text-[0.5625rem] uppercase tracking-wide text-subtle">Hidden</span>
+        </>
+      ) : (
+        <>
+          <span
+            className="shrink-0 whitespace-nowrap font-mono text-[0.8125rem] font-bold leading-none tracking-tight text-fg"
+            title={track.label}
+          >
+            {track.label}
+          </span>
+          <span
+            className={cn(
+              "shrink-0 text-[0.625rem] font-semibold uppercase",
+              lat === "left" && "text-hemi-l",
+              lat === "right" && "text-hemi-r",
+              lat === "midline" && "text-hemi-c",
+              lat === "unknown" && "text-subtle",
+            )}
+          >
+            {lat === "left" ? "L" : lat === "right" ? "R" : lat === "midline" ? "C" : "—"}
+          </span>
+          <button
+            type="button"
+            title="Hide channel"
+            aria-label={`Hide ${track.label}`}
+            aria-pressed={false}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => toggleTrackVisibility(track.id)}
+            className="grid size-5 shrink-0 place-items-center rounded-sm text-subtle hover:bg-surface-2 hover:text-fg"
+          >
+            <Eye className="size-3" />
+          </button>
+          <button
+            type="button"
+            title="Solo — double-click for exclusive"
+            aria-label={`Solo ${track.label}`}
+            aria-pressed={solo}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={() => toggleSolo(track.id)}
             onDoubleClick={() => soloExclusive(track.id)}
             className={cn(
-              "grid h-6 min-w-6 shrink-0 place-items-center rounded-sm text-[0.6875rem] font-bold",
+              "grid size-5 shrink-0 place-items-center rounded-sm text-[0.625rem] font-bold",
               solo ? "bg-ok text-bg" : "bg-surface-2 text-subtle hover:text-fg",
             )}
           >
@@ -1713,44 +1781,29 @@ function TrackGutter({
           <button
             type="button"
             title={muted ? "Unmute" : "Mute"}
+            aria-label={`${muted ? "Unmute" : "Mute"} ${track.label}`}
+            aria-pressed={muted}
+            onPointerDown={(event) => event.stopPropagation()}
             onClick={() => toggleMute(track.id)}
             className={cn(
-              "grid h-6 min-w-6 shrink-0 place-items-center rounded-sm text-[0.6875rem] font-bold",
+              "grid size-5 shrink-0 place-items-center rounded-sm text-[0.625rem] font-bold",
               muted ? "bg-danger text-bg" : "bg-surface-2 text-subtle hover:text-fg",
             )}
           >
             M
           </button>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-baseline justify-between gap-1">
-              <span className="whitespace-nowrap font-mono text-[0.72rem] font-semibold leading-tight tracking-tight text-fg" style={{ color }} title={track.label}>
-                {track.label}
-              </span>
-              <span
-                className={cn(
-                  "shrink-0 text-[0.625rem] uppercase",
-                  lat === "left" && "text-hemi-l",
-                  lat === "right" && "text-hemi-r",
-                  lat === "midline" && "text-hemi-c",
-                  lat === "unknown" && "text-subtle",
-                )}
-              >
-                {lat === "left" ? "L" : lat === "right" ? "R" : lat === "midline" ? "C" : "—"}
-              </span>
-            </div>
-            {!compact && (
-              <input
-                type="range"
-                min={0}
-                max={2}
-                step={0.05}
-                value={typeof st?.gain === "number" ? st.gain : 1}
-                onChange={(e) => setGain(track.id, Number(e.target.value))}
-                className="h-1 w-full cursor-pointer accent-accent"
-                aria-label={`${track.label} gain`}
-              />
-            )}
-          </div>
+          {!compact && (
+            <input
+              type="range"
+              min={0}
+              max={2}
+              step={0.05}
+              value={typeof st?.gain === "number" ? st.gain : 1}
+              onChange={(e) => setGain(track.id, Number(e.target.value))}
+              className="h-1 min-w-10 flex-1 cursor-pointer accent-accent"
+              aria-label={`${track.label} gain`}
+            />
+          )}
         </>
       )}
     </div>
