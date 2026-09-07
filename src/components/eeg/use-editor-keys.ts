@@ -33,10 +33,10 @@ export function useEditorKeys(onToggleFocus?: () => void) {
         }
         return;
       }
-      // Alt+Arrow is a documented fine seek. Other modified shortcuts remain
-      // browser/application-owned and should pass through untouched.
-      const fineSeek = e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight");
-      if (e.metaKey || e.ctrlKey || (e.altKey && !fineSeek)) return;
+      // Arrow keys page/pan the viewport. Alt+Arrow is a documented fine pan.
+      // Other modified shortcuts remain browser/application-owned.
+      const arrowPan = e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight");
+      if (e.metaKey || e.ctrlKey || (e.altKey && !arrowPan)) return;
       if (e.code === "Space") {
         e.preventDefault();
         void s.togglePlay();
@@ -104,6 +104,14 @@ export function useEditorKeys(onToggleFocus?: () => void) {
         s.page(-1);
         return;
       }
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        const dir = e.key === "ArrowRight" ? 1 : -1;
+        if (e.altKey) s.panView(dir * 0.2);
+        else if (e.shiftKey) s.panView(dir * 5);
+        else s.page(dir);
+        return;
+      }
       if (!s.segment) return;
 
       if (!e.shiftKey && (e.key === "n" || e.key === "N")) {
@@ -125,18 +133,6 @@ export function useEditorKeys(onToggleFocus?: () => void) {
       if (e.key === "End") {
         e.preventDefault();
         s.seekEeg(s.segment.duration);
-        return;
-      }
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        const step = e.altKey ? 0.2 : e.shiftKey ? 5 : 1;
-        s.nudge(-step);
-        return;
-      }
-      if (e.key === "ArrowRight") {
-        e.preventDefault();
-        const step = e.altKey ? 0.2 : e.shiftKey ? 5 : 1;
-        s.nudge(step);
         return;
       }
       if (e.key === "=" || e.key === "+" || e.key === "]") {

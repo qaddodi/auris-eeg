@@ -135,9 +135,11 @@ describe("navigation state machine", () => {
     let current = state({ positionSec: 50, viewport: { durationSec: 10 } });
     current = reduceNavigation(current, { type: "pan", deltaSec: 10 });
     assert.equal(current.followMode, "manual");
+    assert.equal(current.positionSec, 50);
     assert.equal(current.viewport.startSec, 57);
     current = reduceNavigation(current, { type: "page", direction: 1 });
     assert.equal(current.followMode, "manual");
+    assert.equal(current.positionSec, 50);
     assert.equal(current.viewport.startSec, 67);
   });
 

@@ -30,7 +30,7 @@ annotation data and a versioned validation gate.
 | Cursor measurements | Exists but needs improvement | Caliper gives duration/frequency; channel-specific amplitude is absent. |
 | Amplitude measurement | Missing and high priority | No calibrated ΔµV/peak-to-peak tool. |
 | Duration measurement | Already good | Caliper measures interval and frequency. |
-| Page forward/back | Already good | Buttons and PageUp/PageDown shortcuts exist. |
+| Page forward/back | Already good | Buttons, arrow keys, and PageUp/PageDown shortcuts exist. |
 | Continuous scrolling | Exists but needs improvement | Follow is tied primarily to playback; continuous manual review is limited. |
 | Keyboard review | Exists but needs improvement | Strong base shortcuts, but no next/previous-event commands. |
 | Annotation entry | Already good | Click, form, type, duration, channel, note, import, and export are supported. |
