@@ -104,7 +104,7 @@ export function auxDerivations(channels: ChannelInfo[]): Derivation[] {
     const sameRate = leftEog.sampleRate === rightEog.sampleRate;
     out.push({
       id: "aux:eog-l-r",
-      label: "EOG L–R (bipolar)",
+      label: "EOG L–R",
       // applyDerivation computes a - b; preserve the clinical L minus R polarity.
       sources: [leftEog.index, rightEog.index],
       laterality: "midline",

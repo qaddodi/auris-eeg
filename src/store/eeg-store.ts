@@ -990,10 +990,30 @@ export const useEegStore = create<AppState>((set, get) => {
     },
 
     page: (dir) => {
-      const { segment } = get();
+      const state = get();
+      const { segment } = state;
       if (!segment) return;
-      const next = commitNavigation({ type: "page", direction: dir });
-      get().seekEeg(next.viewport.startSec, "programmatic");
+      // Paging is viewport navigation only. Keep the review/playback cursor
+      // untouched so the toolbar arrows never seek the recording.
+      const total = segment.duration;
+      const next = reduceNavigation(
+        {
+          recordingDurationSec: total,
+          positionSec: state.reviewCursorEeg,
+          viewport: { startSec: state.viewStart, durationSec: state.viewDuration },
+          followMode: state.followPlayhead ? "following" : "manual",
+          playbackStatus: state.playbackStatus,
+          hover: state.hoverCursor,
+          selectedAnnotationId: state.selectedAnnotation,
+        },
+        { type: "page", direction: dir },
+      );
+      set({
+        viewStart: next.viewport.startSec,
+        viewDuration: next.viewport.durationSec,
+        followPlayhead: next.followMode === "following",
+        manualNavigationOverride: next.followMode === "manual",
+      });
       refreshDisplayWindow(next.viewport.startSec, next.viewport.durationSec);
     },
 

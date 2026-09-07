@@ -644,7 +644,7 @@ describe("polygraphy channel kinds", () => {
       d.some(
         (x) =>
           x.kind === "eog" &&
-          x.label === "EOG L–R (bipolar)" &&
+          x.label === "EOG L–R" &&
           x.sources[0] === 20 &&
           x.sources[1] === 21 &&
           x.available,
