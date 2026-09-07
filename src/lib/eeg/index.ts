@@ -14,3 +14,5 @@ export * from "./shortcuts.ts";
 export * from "./spectrum.ts";
 export * from "./annotations.ts";
 export * from "./annotation-layout.ts";
+export * from "./abnormality/screening.ts";
+export * from "./abnormality/phenomena.ts";
