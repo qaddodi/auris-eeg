@@ -13,7 +13,6 @@ import {
 } from "@/lib/eeg/view";
 import { ANNOTATION_TYPES, MORPH_COLOR } from "@/lib/eeg/defaults";
 import { displayScaleForChannel } from "@/lib/eeg/display";
-import { CSS_PX_PER_MM, nominalMmForVoltage } from "@/lib/eeg/display-geometry";
 import {
   hitTestAnnotations,
   layoutAnnotations,
@@ -1430,67 +1429,6 @@ function drawEditor(
     drawLaneLabel(ctx, tr.label, plotX + 8, mid, laneHeight, color);
   });
 
-  if (list.length > 0 && laneH > 18) {
-    // Natus-style review displays commonly keep sensitivity and page speed in
-    // a small, persistent calibration legend. This is an educational display
-    // reference: retain the amplitude and sensitivity units, but describe the
-    // horizontal extent as the current page duration rather than paper speed.
-    const sensitivity = Number.isFinite(s.sensitivityUv) ? Math.max(0, s.sensitivityUv) : 0;
-    const calibrationUv = sensitivity * 10;
-    const calibrationMm = nominalMmForVoltage(calibrationUv, sensitivity);
-    const calibrationPx = calibrationMm * CSS_PX_PER_MM;
-    const cardW = 218;
-    const cardH = 58;
-    const cardX = Math.max(plotX + 8, plotX + plotW - cardW - 12);
-    const cardY = plotTop + 10;
-    const pulseX = cardX + 14;
-    const pulseMid = cardY + 31;
-    const pulseHalf = Math.min(21, Math.max(8, calibrationPx / 2));
-    const pageSeconds = Math.max(0, viewEnd - viewStart);
-    const sensitivityLabel = sensitivity >= 10 ? sensitivity.toFixed(0) : sensitivity.toFixed(1);
-    const durationLabel = pageSeconds >= 10 ? pageSeconds.toFixed(0) : pageSeconds.toFixed(1);
-    const amplitudeLabel =
-      calibrationUv >= 100
-        ? calibrationUv.toFixed(0)
-        : calibrationUv >= 10
-          ? calibrationUv.toFixed(1).replace(/\.0$/, "")
-          : calibrationUv.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
-
-    ctx.save();
-    ctx.fillStyle = "rgba(10, 13, 17, 0.96)";
-    ctx.strokeStyle = "rgba(126, 184, 201, 0.78)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(cardX + 0.5, cardY + 0.5, cardW - 1, cardH - 1, 5);
-    ctx.fill();
-    ctx.stroke();
-
-    // A compact square calibration pulse makes the amplitude reference
-    // recognizable even when the text is scanned quickly.
-    ctx.strokeStyle = "#7eb8c9";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(pulseX - 6, pulseMid - pulseHalf);
-    ctx.lineTo(pulseX, pulseMid - pulseHalf);
-    ctx.lineTo(pulseX, pulseMid + pulseHalf);
-    ctx.lineTo(pulseX + 14, pulseMid + pulseHalf);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(pulseX - 6, pulseMid + pulseHalf);
-    ctx.lineTo(pulseX, pulseMid + pulseHalf);
-    ctx.stroke();
-
-    ctx.textAlign = "left";
-    ctx.textBaseline = "alphabetic";
-    ctx.fillStyle = "#f1f4f7";
-    ctx.font = "750 13px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
-    ctx.fillText(`${amplitudeLabel} µV p–p`, cardX + 38, cardY + 21);
-    ctx.fillStyle = "#aeb6c2";
-    ctx.font = "600 10px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
-    ctx.fillText(`${sensitivityLabel} µV/mm nominal`, cardX + 38, cardY + 38);
-    ctx.fillText(`${durationLabel} s/page`, cardX + 38, cardY + 51);
-    ctx.restore();
-  }
 }
 
 function drawEditorOverlay(
