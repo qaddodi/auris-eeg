@@ -38,6 +38,10 @@ const DSA_RIGHT = 82;
 const DSA_TOP = 14;
 const DSA_BOTTOM = 17;
 const EVENT_LANE = 18;
+// Hidden channels retain their ordered slot, but only need enough room for
+// the compact gutter affordance. The remaining plot height is redistributed
+// across visible channels by laneLayout.
+const HIDDEN_LANE_HEIGHT = 26;
 
 /** Keep the montage's related derivations together without hiding any valid
  * clinical channels. Auxiliary channels form a separate visual band and EKG
@@ -86,9 +90,14 @@ function laneGroup(track: ProcessedTrack, index: number, list: ProcessedTrack[])
   return "banana:right-temporal";
 }
 
-function laneLayout(list: ProcessedTrack[], plotHeight: number): LaneRect[] {
+function laneLayout(
+  list: ProcessedTrack[],
+  plotHeight: number,
+  hiddenTrackIds: readonly string[] = [],
+): LaneRect[] {
   const count = list.length;
   if (count === 0) return [];
+  const hidden = new Set(hiddenTrackIds);
   const boundaries = list.reduce(
     (total, track, index) =>
       index > 0 && laneGroup(list[index - 1]!, index - 1, list) !== laneGroup(track, index, list)
@@ -99,11 +108,28 @@ function laneLayout(list: ProcessedTrack[], plotHeight: number): LaneRect[] {
   // Preserve usable trace height even in compact views while making clinical
   // chain boundaries visibly larger than ordinary lane separators.
   const gap = boundaries > 0 ? Math.min(10, Math.max(3, plotHeight / (count * 8))) : 0;
-  const laneHeight = Math.max(1, (plotHeight - boundaries * gap) / count);
+  const available = Math.max(1, plotHeight - boundaries * gap);
+  const hiddenCount = list.reduce((total, track) => total + (hidden.has(track.id) ? 1 : 0), 0);
+  const visibleCount = count - hiddenCount;
+  // Keep compact rows usable even when the viewport is short. If there is not
+  // enough room for every fixed-height chip, shrink the chips before allowing
+  // the visible lanes to collapse below one pixel.
+  const hiddenHeight =
+    hiddenCount > 0
+      ? Math.min(
+          HIDDEN_LANE_HEIGHT,
+          Math.max(1, (available - visibleCount) / hiddenCount),
+        )
+      : 0;
+  const visibleHeight =
+    visibleCount > 0
+      ? Math.max(1, (available - hiddenCount * hiddenHeight) / visibleCount)
+      : 0;
   let top = 0;
   return list.map((track, index) => {
-    const rect = { top, height: laneHeight };
-    top += laneHeight;
+    const height = hidden.has(track.id) ? hiddenHeight : visibleHeight;
+    const rect = { top, height };
+    top += height;
     if (index < count - 1 && laneGroup(track, index, list) !== laneGroup(list[index + 1]!, index + 1, list)) {
       top += gap;
     }
@@ -111,8 +137,13 @@ function laneLayout(list: ProcessedTrack[], plotHeight: number): LaneRect[] {
   });
 }
 
-function laneAtY(list: ProcessedTrack[], plotHeight: number, y: number): number {
-  const lanes = laneLayout(list, plotHeight);
+function laneAtY(
+  list: ProcessedTrack[],
+  plotHeight: number,
+  y: number,
+  hiddenTrackIds: readonly string[] = [],
+): number {
+  const lanes = laneLayout(list, plotHeight, hiddenTrackIds);
   return lanes.findIndex((lane) => y >= lane.top && y <= lane.top + lane.height);
 }
 
@@ -433,7 +464,7 @@ export function WaveformView() {
             displayStart,
             s.focusedTrackIds,
             s.hoverCursor,
-            laneLayout(editorList, Math.max(1, cssH - RULER)),
+            laneLayout(editorList, Math.max(1, cssH - RULER), s.hiddenTrackIds),
           );
           if (!editorReady && waveSig !== "waiting-for-display-window") {
             clearWaveformCanvas(ectx, cssW, cssH, dpr);
@@ -559,7 +590,7 @@ export function WaveformView() {
       ),
     );
     const laneIds = pointerTracks.map((track) => track.id);
-    const lanes = laneLayout(pointerTracks, Math.max(1, rect.height - RULER));
+    const lanes = laneLayout(pointerTracks, Math.max(1, rect.height - RULER), latest.hiddenTrackIds);
     const laneH = Math.max(1, (rect.height - RULER) / Math.max(1, laneIds.length));
     const y = e.clientY - rect.top;
     const annotationCandidates = latest.showAnnotations
@@ -614,7 +645,9 @@ export function WaveformView() {
       return;
     }
     if (s.tool === "caliper") {
-      const lane = y >= RULER ? laneAtY(pointerTracks, Math.max(1, rect.height - RULER), y - RULER) : -1;
+      const lane = y >= RULER
+        ? laneAtY(pointerTracks, Math.max(1, rect.height - RULER), y - RULER, latest.hiddenTrackIds)
+        : -1;
       dragRef.current = { kind: "caliper", x0: e.clientX, start0: t, dur0: 0 };
       caliperRef.current = { a: t, b: t, trackId: laneIds[lane] ?? null };
       paintRef.current();
@@ -693,6 +726,7 @@ export function WaveformView() {
           list,
           Math.max(1, rect.height - RULER),
           e.clientY - rect.top - RULER,
+          state.hiddenTrackIds,
         );
         const next = list[lane]?.id ?? null;
         const frac = clamp((e.clientX - rect.left + (wrapRef.current?.scrollLeft ?? 0) - GUTTER) / plotW, 0, 1);
@@ -858,7 +892,12 @@ export function WaveformView() {
       (t) => t.kind !== "extra",
     ),
   );
-  const renderedLanes = laneLayout(list, Math.max(1, (wrapRef.current?.clientHeight ?? 600) - RULER));
+  const hiddenTrackIds = useEegStore((s) => s.hiddenTrackIds);
+  const renderedLanes = laneLayout(
+    list,
+    Math.max(1, (wrapRef.current?.clientHeight ?? 600) - RULER),
+    hiddenTrackIds,
+  );
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -986,7 +1025,7 @@ function drawEditor(
   const plotTop = RULER;
   const plotH = Math.max(10, cssH - RULER);
   const n = Math.max(1, list.length);
-  const lanes = laneLayout(list, plotH);
+  const lanes = laneLayout(list, plotH, s.hiddenTrackIds);
   const laneH = lanes[0]?.height ?? plotH / n;
   const sign = s.negativeUp ? -1 : 1;
   const span = Math.max(1e-6, viewEnd - viewStart);
@@ -1321,17 +1360,20 @@ function drawOverviewWaves(
   if (list.length === 0 || total <= 0) return;
   const nPix = Math.max(1, Math.ceil(cssW * dpr));
   const n = Math.max(1, list.length);
-  const laneH = (cssH - 14) / n;
+  const overviewPlotH = Math.max(1, cssH - 8);
+  const lanes = laneLayout(list, overviewPlotH, s.hiddenTrackIds);
+  const laneH = lanes[0]?.height ?? overviewPlotH / n;
   const sign = s.negativeUp ? -1 : 1;
   list.forEach((tr, i) => {
-    const y0 = 4 + i * laneH;
-    const mid = y0 + laneH / 2;
+    const lane = lanes[i] ?? { top: i * laneH, height: laneH };
+    const y0 = 4 + lane.top;
+    const rowHeight = lane.height;
+    const mid = y0 + rowHeight / 2;
     if (s.hiddenTrackIds.includes(tr.id)) {
-      // Keep hidden channels in their original overview lane as well; hiding
-      // a trace must not make the miniature overview reorder the remaining
-      // channels vertically.
+      // Keep the hidden channel in order while collapsing its overview row to
+      // the same compact height used by the editor.
       ctx.fillStyle = "rgba(232,234,237,0.04)";
-      ctx.fillRect(0, y0 + 1, cssW, Math.max(1, laneH - 2));
+      ctx.fillRect(0, y0 + 1, cssW, Math.max(1, rowHeight - 2));
       ctx.strokeStyle = "rgba(232,234,237,0.16)";
       ctx.setLineDash([2, 3]);
       ctx.beginPath();
@@ -1354,7 +1396,7 @@ function drawOverviewWaves(
           ),
         }
       : raw;
-    const scale = displayScaleForChannel(laneH, s.sensitivityUv, tr.kind, profile);
+    const scale = displayScaleForChannel(rowHeight, s.sensitivityUv, tr.kind, profile);
     ctx.globalAlpha = 0.9;
     ctx.strokeStyle = stableTraceColor(tr.id, tr.kind, lat);
     ctx.lineWidth = 1;
