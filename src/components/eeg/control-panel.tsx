@@ -50,6 +50,8 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
   const setSoundMode = useEegStore((s) => s.setSoundMode);
   const showDsa = useEegStore((s) => s.showDsa);
   const setShowDsa = useEegStore((s) => s.setShowDsa);
+  const showDsaBands = useEegStore((s) => s.showDsaBands);
+  const setShowDsaBands = useEegStore((s) => s.setShowDsaBands);
   const evidencePreparation = useEegStore((s) => s.evidencePreparation);
   const evidenceReason = useEegStore((s) => s.evidenceReason);
   const exportMappingAudit = useEegStore((s) => s.exportMappingAudit);
@@ -432,6 +434,16 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
                   type="checkbox"
                   checked={showDsa}
                   onChange={(e) => setShowDsa(e.target.checked)}
+                  className="size-4 accent-accent"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-2 text-sm text-fg">
+                DSA frequency bands
+                <input
+                  type="checkbox"
+                  checked={showDsaBands}
+                  disabled={!showDsa}
+                  onChange={(e) => setShowDsaBands(e.target.checked)}
                   className="size-4 accent-accent"
                 />
               </label>

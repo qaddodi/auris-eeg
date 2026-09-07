@@ -34,7 +34,13 @@ import {
   EEG_CHAIN_COLORS,
   stableTraceColor,
 } from "@/lib/eeg/colors";
-import { dsaRgb, dsaUnit, type DsaFrame } from "@/lib/eeg/spectrum";
+import {
+  BAND_COLORS,
+  BAND_LABELS,
+  dsaRgb,
+  dsaUnit,
+  type DsaFrame,
+} from "@/lib/eeg/spectrum";
 import { eegNow, useEegStore } from "@/store/eeg-store";
 import type { ResolvedTheme } from "./theme";
 
@@ -759,6 +765,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
   const panView = useEegStore((s) => s.panView);
   const zoomAt = useEegStore((s) => s.zoomAt);
   const showDsa = useEegStore((s) => s.showDsa);
+  const showDsaBands = useEegStore((s) => s.showDsaBands);
   const viewDuration = useEegStore((s) => s.viewDuration);
 
   useEffect(() => {
@@ -966,6 +973,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
             octx,
             dsaW,
             dsaH,
+            s.dsa,
             t,
             viewStart,
             viewDur,
@@ -974,6 +982,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
             s.showAuto,
             s.showAnnotations,
             s.selectedAnnotation,
+            showDsaBands,
             effectiveTheme,
           );
         }
@@ -1020,7 +1029,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
       unsub();
       ro.disconnect();
     };
-  }, [effectiveTheme, gutterWidth, gutterCollapsed]);
+  }, [effectiveTheme, gutterWidth, gutterCollapsed, showDsaBands]);
 
   const onRulerPointer = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!segment || !wrapRef.current || !surfaceRef.current) return;
@@ -2201,10 +2210,74 @@ function drawDsa(
   }
 }
 
+function dsaBandBounds(id: (typeof BAND_LABELS)[number]["id"]): [number, number] {
+  switch (id) {
+    case "delta":
+      return [0, 4];
+    case "theta":
+      return [4, 8];
+    case "alpha":
+      return [8, 13];
+    case "beta":
+      return [13, 30];
+    case "gamma":
+      return [30, 45];
+  }
+}
+
+function drawDsaBandOverlay(
+  ctx: CanvasRenderingContext2D,
+  cssW: number,
+  cssH: number,
+  frame: DsaFrame,
+  theme: ResolvedTheme,
+) {
+  const palette = CANVAS_PALETTES[theme];
+  const plotW = Math.max(1, cssW - DSA_LEFT - DSA_RIGHT);
+  const halfH = Math.max(1, (cssH - DSA_TOP - DSA_BOTTOM) / 2);
+  const midY = DSA_TOP + halfH;
+  const fMax = Math.max(1, frame.fMax);
+  const yTop = (hz: number) => DSA_TOP + (1 - hz / fMax) * halfH;
+  const yBottom = (hz: number) => midY + (hz / fMax) * halfH;
+
+  ctx.save();
+  ctx.font = "600 8px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
+  ctx.textBaseline = "middle";
+  for (const band of BAND_LABELS) {
+    const [low, high] = dsaBandBounds(band.id);
+    const color = BAND_COLORS[band.id];
+    const top = Math.max(DSA_TOP, yTop(Math.min(high, fMax)));
+    const bottom = Math.min(midY, yTop(Math.min(low, fMax)));
+    const lowerTop = Math.max(midY, yBottom(Math.min(low, fMax)));
+    const lowerBottom = Math.min(DSA_TOP + halfH * 2, yBottom(Math.min(high, fMax)));
+    ctx.fillStyle = `${color}2b`;
+    ctx.fillRect(DSA_LEFT, top, plotW, Math.max(1, bottom - top));
+    ctx.fillRect(DSA_LEFT, lowerTop, plotW, Math.max(1, lowerBottom - lowerTop));
+    ctx.strokeStyle = `${color}b8`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(DSA_LEFT, top + 0.5);
+    ctx.lineTo(cssW - DSA_RIGHT, top + 0.5);
+    ctx.moveTo(DSA_LEFT, lowerBottom - 0.5);
+    ctx.lineTo(cssW - DSA_RIGHT, lowerBottom - 0.5);
+    ctx.stroke();
+
+    const label = `${band.glyph} ${band.range} Hz`;
+    const labelWidth = ctx.measureText(label).width + 8;
+    ctx.fillStyle = `${palette.dsaBg}dd`;
+    ctx.fillRect(DSA_LEFT + 3, top + 2, labelWidth, 11);
+    ctx.fillStyle = color;
+    ctx.fillRect(DSA_LEFT + 4, top + 4, 2, 7);
+    ctx.fillText(label, DSA_LEFT + 9, top + 7.5);
+  }
+  ctx.restore();
+}
+
 function drawDsaOverlay(
   ctx: CanvasRenderingContext2D,
   cssW: number,
   cssH: number,
+  frame: DsaFrame | null,
   t: number,
   viewStart: number,
   viewDur: number,
@@ -2213,6 +2286,7 @@ function drawDsaOverlay(
   showAuto = true,
   showAnnotations = true,
   selectedId: string | null = null,
+  showBands = false,
   theme: ResolvedTheme = "dark",
 ) {
   const palette = CANVAS_PALETTES[theme];
@@ -2227,6 +2301,7 @@ function drawDsaOverlay(
   const plotTop = DSA_TOP;
   const plotH = Math.max(1, cssH - DSA_TOP - DSA_BOTTOM);
   const width = Math.max(8, x1 - x0);
+  if (showBands && frame) drawDsaBandOverlay(ctx, cssW, cssH, frame, theme);
   ctx.fillStyle = palette.navigatorShade;
   ctx.fillRect(DSA_LEFT, plotTop, Math.max(0, x0 - DSA_LEFT), plotH);
   ctx.fillRect(Math.min(cssW - DSA_RIGHT, x0 + width), plotTop, Math.max(0, cssW - DSA_RIGHT - x0 - width), plotH);

@@ -9,7 +9,7 @@ import {
   type ChangeEvent,
   type ReactNode,
 } from "react";
-import { Activity, PanelLeft } from "lucide-react";
+import { Activity, Layers, PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ControlPanel } from "./control-panel";
 import { Transport } from "./transport";
@@ -39,6 +39,8 @@ export function Workstation() {
   const status = useEegStore((s) => s.status);
   const showDsa = useEegStore((s) => s.showDsa);
   const setShowDsa = useEegStore((s) => s.setShowDsa);
+  const showDsaBands = useEegStore((s) => s.showDsaBands);
+  const setShowDsaBands = useEegStore((s) => s.setShowDsaBands);
   const demoStarted = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const toggleFocusEeg = useCallback(() => setFocusEeg((value) => !value), []);
@@ -161,6 +163,17 @@ export function Workstation() {
             onClick={() => setShowDsa(!showDsa)}
           >
             <Activity aria-hidden="true" />
+          </Button>
+          <Button
+            size="iconSm"
+            variant={showDsaBands ? "default" : "ghost"}
+            aria-label={showDsaBands ? "Hide DSA frequency bands" : "Show DSA frequency bands"}
+            aria-pressed={showDsaBands}
+            title={showDsaBands ? "Hide DSA frequency bands" : "Show DSA frequency bands"}
+            onClick={() => setShowDsaBands(!showDsaBands)}
+            disabled={!showDsa}
+          >
+            <Layers aria-hidden="true" />
           </Button>
           <Button
             size="iconSm"

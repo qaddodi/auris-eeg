@@ -136,6 +136,7 @@ export interface AppState {
   tool: "pan" | "annotate" | "caliper";
   pendingType: MorphologyType;
   showDsa: boolean;
+  showDsaBands: boolean;
   dsa: DsaFrame | null;
   audibleScrub: boolean;
 
@@ -188,6 +189,7 @@ export interface AppState {
   exportAnnotations: () => void;
   exportMappingAudit: () => void;
   setShowDsa: (v: boolean) => void;
+  setShowDsaBands: (v: boolean) => void;
   setAudibleScrub: (v: boolean) => void;
   toggleTrackVisibility: (id: string) => void;
 }
@@ -612,6 +614,7 @@ export const useEegStore = create<AppState>((set, get) => {
     tool: "pan",
     pendingType: "comment",
     showDsa: true,
+    showDsaBands: false,
     dsa: null,
     audibleScrub: false,
 
@@ -873,6 +876,7 @@ export const useEegStore = create<AppState>((set, get) => {
     setAboutOpen: (v) => set({ aboutOpen: v }),
     setKeysOpen: (v) => set({ keysOpen: v }),
     setShowDsa: (v) => set({ showDsa: v }),
+    setShowDsaBands: (v) => set({ showDsaBands: v }),
     setZoomLocked: (locked) => set({ zoomLocked: locked }),
     setAudibleScrub: (v) =>
       set({ audibleScrub: v && ["experimental", "musical"].includes(get().soundMode) }),

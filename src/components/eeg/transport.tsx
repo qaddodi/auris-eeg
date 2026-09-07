@@ -99,6 +99,8 @@ export function Transport({
   const setShowAuto = useEegStore((s) => s.setShowAuto);
   const showDsa = useEegStore((s) => s.showDsa);
   const setShowDsa = useEegStore((s) => s.setShowDsa);
+  const showDsaBands = useEegStore((s) => s.showDsaBands);
+  const setShowDsaBands = useEegStore((s) => s.setShowDsaBands);
   const soundMode = useEegStore((s) => s.soundMode);
   const setSoundMode = useEegStore((s) => s.setSoundMode);
   const download = useEegStore((s) => s.download);
@@ -256,6 +258,9 @@ export function Transport({
           </Button>
           <Button size="sm" variant={showDsa ? "default" : "ghost"} className={toolClass} aria-pressed={showDsa} title={showDsa ? "Hide DSA" : "Show DSA"} onClick={() => setShowDsa(!showDsa)}>
             <Activity aria-hidden="true" /> DSA
+          </Button>
+          <Button size="sm" variant={showDsaBands ? "default" : "ghost"} className={toolClass} aria-pressed={showDsaBands} disabled={!showDsa} title={showDsaBands ? "Hide DSA frequency bands" : "Show DSA frequency bands"} onClick={() => setShowDsaBands(!showDsaBands)}>
+            <Layers aria-hidden="true" /> Bands
           </Button>
         </div>
 
