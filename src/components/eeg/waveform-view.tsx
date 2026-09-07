@@ -5,7 +5,6 @@ import { ChevronLeft, ChevronRight, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { audibleIds } from "@/lib/eeg/pipeline";
 import type { Annotation, ProcessedTrack, TrackState } from "@/lib/eeg/types";
-import type { UnifiedAbnormalityFinding } from "@/lib/eeg/abnormality/types";
 import { playback } from "@/lib/eeg/audio";
 import {
   clamp,
@@ -853,8 +852,6 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
             s.hoverCursor,
             laneLayout(editorList, Math.max(1, cssH - RULER), s.hiddenTrackIds),
             hoveredAnnotationRef.current,
-            s.machineFindings,
-            s.selectedFindingId,
             gutterWidth,
             effectiveTheme,
           );
@@ -898,8 +895,6 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
             s.annotations,
             s.showAuto,
             s.showAnnotations,
-            s.machineFindings,
-            s.selectedFindingId,
             effectiveTheme,
           );
         }
@@ -1664,8 +1659,6 @@ function drawEditorOverlay(
   hoverCursor: { timeSec: number; trackId: string | null } | null = null,
   lanes: LaneRect[] = [],
   hoveredAnnotationId: string | null = null,
-  machineFindings: UnifiedAbnormalityFinding[] = [],
-  selectedFindingId: string | null = null,
   gutterWidth: number = GUTTER_EXPANDED,
   theme: ResolvedTheme = "dark",
 ) {
@@ -1676,30 +1669,6 @@ function drawEditorOverlay(
   const plotX = gutterWidth;
   const plotW = Math.max(10, cssW - gutterWidth);
   const viewEnd = viewStart + viewDur;
-  const selectedFinding = machineFindings.find((finding) => finding.id === selectedFindingId && finding.reviewStatus !== "dismissed");
-  if (selectedFinding) {
-    const x0 = plotX + clamp((selectedFinding.interval.start - viewStart) / Math.max(1e-6, viewDur), 0, 1) * plotW;
-    const x1 = plotX + clamp((selectedFinding.interval.end - viewStart) / Math.max(1e-6, viewDur), 0, 1) * plotW;
-    ctx.fillStyle = "rgba(242,200,121,0.15)";
-    ctx.fillRect(Math.min(x0, x1), RULER, Math.max(3, Math.abs(x1 - x0)), cssH - RULER);
-    ctx.strokeStyle = "rgba(242,200,121,0.95)";
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([6, 3]);
-    ctx.strokeRect(Math.min(x0, x1) + 0.5, RULER + 0.5, Math.max(2, Math.abs(x1 - x0) - 1), cssH - RULER - 1);
-    ctx.setLineDash([]);
-    const findingLaneIds = tracks.filter((track) => track.kind !== "extra").map((track) => track.id);
-    for (const derivation of selectedFinding.displayedDerivations) {
-      const laneIndex = findingLaneIds.indexOf(derivation.id);
-      if (laneIndex < 0) continue;
-      const rect = lanes[laneIndex] ?? { top: laneIndex * ((cssH - RULER) / Math.max(1, findingLaneIds.length)), height: (cssH - RULER) / Math.max(1, findingLaneIds.length) };
-      ctx.strokeStyle = "rgba(242,200,121,0.95)";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(plotX + 2, RULER + rect.top + 2, Math.max(2, plotW - 4), Math.max(2, rect.height - 4));
-    }
-    ctx.fillStyle = "#f2c879";
-    ctx.font = "600 10px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
-    ctx.fillText(`FINDING · ${selectedFinding.label || selectedFinding.type}`, plotX + 7, RULER + 11);
-  }
   if (showAnnotations) {
     const visible = annotations.filter(
       (annotation) => annotation.source !== "auto" || (showAuto && annotation.type !== "qrs"),
@@ -1951,8 +1920,6 @@ function drawOverviewOverlay(
   annotations: Annotation[] = [],
   showAuto = true,
   showAnnotations = true,
-  machineFindings: UnifiedAbnormalityFinding[] = [],
-  selectedFindingId: string | null = null,
   theme: ResolvedTheme = "dark",
 ) {
   const palette = CANVAS_PALETTES[theme];
@@ -1960,15 +1927,6 @@ function drawOverviewOverlay(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
   if (total <= 0) return;
-  const selectedFinding = machineFindings.find((finding) => finding.id === selectedFindingId && finding.reviewStatus !== "dismissed");
-  if (selectedFinding) {
-    const x0 = (selectedFinding.interval.start / total) * cssW;
-    const x1 = (selectedFinding.interval.end / total) * cssW;
-    ctx.fillStyle = "rgba(242,200,121,0.26)";
-    ctx.fillRect(x0, 0, Math.max(3, x1 - x0), cssH);
-    ctx.strokeStyle = "rgba(242,200,121,0.95)";
-    ctx.strokeRect(x0 + 0.5, 0.5, Math.max(2, x1 - x0 - 1), cssH - 1);
-  }
   if (showAnnotations) {
     for (const a of annotations) {
       if (a.source === "auto" && (a.type === "qrs" || !showAuto)) continue;

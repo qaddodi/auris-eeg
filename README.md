@@ -60,11 +60,6 @@ TypeScript tests under `src/lib/app-data`, `src/lib/auth`, `src/lib/eeg`, and
 
 ## Privacy and limits
 
-The optional local finding-assistance pipeline is documented in
-[docs/ABNORMALITY_DETECTION.md](docs/ABNORMALITY_DETECTION.md), including model
-installation, supported screening findings, provenance, licensing,
-localization limits, privacy, and validation status.
-
 Use vendor tooling to deidentify files before opening them. Auris hides common
 patient and recording identifiers in the UI and warns on suspicious header
 text, but a local browser tool is not a deidentification guarantee. Do not add
