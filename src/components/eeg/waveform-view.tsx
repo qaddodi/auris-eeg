@@ -415,10 +415,10 @@ function drawInlineAnnotationLabel(
   cssH: number,
 ) {
   const text = annotationInlineLabel(annotation);
-  const font = "700 11px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
-  const padX = 7;
-  const padY = 4;
-  const height = 19;
+  const font = "700 12px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
+  const padX = 8;
+  const padY = 5;
+  const height = 23;
   const plotRight = plotX + plotW;
   const maxWidth = Math.max(80, Math.min(330, plotW - 12));
 
@@ -456,17 +456,61 @@ function drawInlineAnnotationLabel(
 
   const color = MORPH_COLOR[annotation.type] ?? "#c8ccd4";
   ctx.globalAlpha = 1;
-  ctx.fillStyle = "#11151a";
+  // The label sits on top of a live trace, so a translucent fill is too easy
+  // to lose. Use an opaque plate and a dark outer keyline before the semantic
+  // color border; this keeps both the text and the marker identity legible on
+  // bright, high-amplitude waveforms.
+  ctx.shadowColor = `${color}66`;
+  ctx.shadowBlur = 6;
+  ctx.fillStyle = "#06080b";
   ctx.fillRect(x, y, labelWidth, height);
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "#020305";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(x + 2, y + 2, Math.max(1, labelWidth - 4), height - 4);
   ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, Math.max(1, labelWidth - 1), height - 1);
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x + 1, y + 1, Math.max(1, labelWidth - 2), height - 2);
   ctx.fillStyle = color;
-  ctx.fillRect(x, y, 3, height);
-  ctx.fillStyle = "#f1f4f7";
+  ctx.fillRect(x + 1, y + 1, 4, height - 2);
+  ctx.fillStyle = "#ffffff";
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  ctx.fillText(labelText, x + padX + 2, y + height / 2);
+  ctx.fillText(labelText, x + padX + 3, y + height / 2);
+  ctx.restore();
+}
+
+function drawAnnotationStartLine(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  color: string,
+  source: Annotation["source"],
+  selected: boolean,
+  cssH: number,
+) {
+  // Give every marker a visible time anchor, including channel-specific
+  // annotations. A dark under-stroke preserves contrast over both quiet and
+  // saturated traces; the colored stroke above it keeps the annotation
+  // distinct from the review cursor (which remains cyan and dashed).
+  const alignedX = Math.round(x) + 0.5;
+  const lineWidth = selected ? 2.5 : 1.5;
+  ctx.save();
+  ctx.globalAlpha = selected ? 0.95 : 0.82;
+  ctx.strokeStyle = "#020305";
+  ctx.lineWidth = lineWidth + 2.5;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(alignedX, 0);
+  ctx.lineTo(alignedX, cssH);
+  ctx.stroke();
+  ctx.globalAlpha = selected ? 1 : 0.9;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
+  ctx.setLineDash(source === "auto" ? [5, 4] : source === "file" ? [2, 3] : []);
+  ctx.beginPath();
+  ctx.moveTo(alignedX, 0);
+  ctx.lineTo(alignedX, cssH);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -1480,7 +1524,7 @@ function drawEditorOverlay(
       const annotation = visible.find((item) => item.id === layout.id);
       if (!annotation) continue;
       const color = MORPH_COLOR[annotation.type] ?? "#c8ccd4";
-      const selectedAlpha = layout.selected ? 0.2 : 0.08;
+      const selectedAlpha = layout.selected ? 0.24 : 0.12;
       ctx.fillStyle = color;
       ctx.globalAlpha = selectedAlpha;
       if (layout.global) {
@@ -1497,19 +1541,28 @@ function drawEditorOverlay(
           ctx.fillRect(layout.x0, lane.top, Math.max(2, layout.x1 - layout.x0), lane.bottom - lane.top);
         }
       }
-      ctx.globalAlpha = layout.selected ? 0.95 : 0.7;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = layout.selected ? 1.5 : 1;
-      ctx.setLineDash(annotation.source === "auto" ? [4, 3] : annotation.source === "file" ? [2, 2] : []);
-      ctx.beginPath();
-      ctx.moveTo(layout.x0, 0);
-      ctx.lineTo(layout.x0, layout.global ? cssH : EVENT_LANE);
+      // layoutAnnotation clamps spans that begin before the viewport to the
+      // plot edge. Only draw a start guide when the actual annotation start is
+      // in view, otherwise a region that began offscreen would look as though
+      // it starts at the left edge.
+      const startsInView = annotation.start >= viewStart - 1e-6 && annotation.start <= viewEnd + 1e-6;
+      if (startsInView) {
+        drawAnnotationStartLine(ctx, layout.x0, color, annotation.source, layout.selected, cssH);
+      }
+      // Keep the event-rail end edge for regions. The start edge above is the
+      // full-height anchor; this short edge avoids adding a second full-height
+      // guide that could be confused with another marker's start.
       if (layout.x1 - layout.x0 > 2) {
+        ctx.globalAlpha = layout.selected ? 0.95 : 0.7;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = layout.selected ? 1.5 : 1;
+        ctx.setLineDash(annotation.source === "auto" ? [4, 3] : annotation.source === "file" ? [2, 2] : []);
+        ctx.beginPath();
         ctx.moveTo(layout.x1, 0);
         ctx.lineTo(layout.x1, layout.global ? cssH : EVENT_LANE);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
-      ctx.stroke();
-      ctx.setLineDash([]);
       if (layout.id === hoveredAnnotationId) {
         drawInlineAnnotationLabel(ctx, annotation, layout, plotX, plotW, viewStart, viewDur, cssW, cssH);
       }
