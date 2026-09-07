@@ -35,6 +35,7 @@ import {
 } from "@/lib/eeg/colors";
 import { dsaRgb, dsaUnit, type DsaFrame } from "@/lib/eeg/spectrum";
 import { eegNow, useEegStore } from "@/store/eeg-store";
+import type { ResolvedTheme } from "./theme";
 
 // The gutter is deliberately only a utility strip. Channel names are drawn at
 // the left edge of each waveform lane (see drawLaneLabel), where they remain
@@ -53,6 +54,118 @@ const EVENT_LANE = 18;
 // across visible channels by laneLayout.
 const HIDDEN_LANE_HEIGHT = 24;
 const CHAIN_GAP = 7;
+
+type CanvasPalette = {
+  bg: string;
+  ruler: string;
+  text: string;
+  muted: string;
+  grid: string;
+  gridStrong: string;
+  laneMid: string;
+  laneBottom: string;
+  spacer: string;
+  hiddenFill: string;
+  hiddenLine: string;
+  labelBg: string;
+  labelText: string;
+  labelHiddenText: string;
+  keyline: string;
+  annotationBg: string;
+  annotationText: string;
+  accent: string;
+  overlayFill: string;
+  overlayStroke: string;
+  cursor: string;
+};
+
+const CANVAS_PALETTES: Record<ResolvedTheme, CanvasPalette> = {
+  dark: {
+    bg: "#07080a",
+    ruler: "#101216",
+    text: "#f1f4f7",
+    muted: "#8b919c",
+    grid: "rgba(232,234,237,0.06)",
+    gridStrong: "rgba(232,234,237,0.22)",
+    laneMid: "rgba(232,234,237,0.05)",
+    laneBottom: "rgba(232,234,237,0.06)",
+    spacer: "rgba(232,234,237,0.13)",
+    hiddenFill: "rgba(232,234,237,0.025)",
+    hiddenLine: "rgba(232,234,237,0.16)",
+    labelBg: "#07080a",
+    labelText: "#f1f4f7",
+    labelHiddenText: "#aeb6c2",
+    keyline: "#020305",
+    annotationBg: "#06080b",
+    annotationText: "#ffffff",
+    accent: "#7eb8c9",
+    overlayFill: "rgba(232,234,237,0.06)",
+    overlayStroke: "rgba(232,234,237,0.45)",
+    cursor: "rgba(232,234,237,0.95)",
+  },
+  light: {
+    bg: "#f8fafb",
+    ruler: "#eaf0f3",
+    text: "#17232c",
+    muted: "#5e6d78",
+    grid: "rgba(23,35,44,0.11)",
+    gridStrong: "rgba(23,35,44,0.28)",
+    laneMid: "rgba(23,35,44,0.10)",
+    laneBottom: "rgba(23,35,44,0.12)",
+    spacer: "rgba(23,35,44,0.09)",
+    hiddenFill: "rgba(23,35,44,0.035)",
+    hiddenLine: "rgba(23,35,44,0.28)",
+    labelBg: "#f8fafb",
+    labelText: "#17232c",
+    labelHiddenText: "#5e6d78",
+    keyline: "#ffffff",
+    annotationBg: "#ffffff",
+    annotationText: "#17232c",
+    accent: "#146b83",
+    overlayFill: "rgba(23,35,44,0.08)",
+    overlayStroke: "rgba(23,35,44,0.42)",
+    cursor: "rgba(23,35,44,0.86)",
+  },
+};
+
+const LIGHT_EEG_CHAIN_COLORS: Record<keyof typeof EEG_CHAIN_COLORS, string> = {
+  "left-temporal": "#087f9b",
+  "left-parasagittal": "#315fb4",
+  midline: "#53636f",
+  "right-parasagittal": "#9a6011",
+  "right-temporal": "#ad3d3d",
+  unknown: "#53636f",
+};
+
+const LIGHT_AUX_TRACE_COLORS: Record<string, string> = {
+  ekg: "#b33434",
+  eog: "#774694",
+  emg: "#9a6011",
+  extra: "#53636f",
+  dc: "#16735f",
+  other: "#53636f",
+};
+
+const LIGHT_MORPH_COLORS: Record<keyof typeof MORPH_COLOR, string> = {
+  spike: "#b33434",
+  sharp: "#9a6011",
+  slow: "#146b83",
+  "spike-wave": "#087f9b",
+  polyspike: "#ad3d3d",
+  periodic: "#774694",
+  "burst-suppression": "#53636f",
+  spindle: "#26754a",
+  alpha: "#16735f",
+  triphasic: "#92600b",
+  blink: "#806b34",
+  qrs: "#ad3d3d",
+  muscle: "#69488c",
+  comment: "#53636f",
+};
+
+function annotationColorForTheme(type: keyof typeof MORPH_COLOR, theme: ResolvedTheme): string {
+  return theme === "light" ? LIGHT_MORPH_COLORS[type] : MORPH_COLOR[type];
+}
 
 /** Keep the montage's related derivations together without hiding any valid
  * clinical channels. Auxiliary channels form a separate visual band and EKG
@@ -144,13 +257,28 @@ function traceColorForLane(
   kind: ProcessedTrack["kind"],
   laterality: ProcessedTrack["laterality"],
   id: string,
+  theme: ResolvedTheme = "dark",
 ): string {
-  if (kind !== "eeg") return AUX_TRACE_COLORS[kind] ?? stableTraceColor(id, kind, laterality);
+  if (kind !== "eeg") {
+    return theme === "light"
+      ? LIGHT_AUX_TRACE_COLORS[kind] ?? stableTraceColor(id, kind, laterality)
+      : AUX_TRACE_COLORS[kind] ?? stableTraceColor(id, kind, laterality);
+  }
   const chain = group.replace(/^banana:/, "") as keyof typeof EEG_CHAIN_COLORS;
   if (group.startsWith("banana:") && chain in EEG_CHAIN_COLORS) {
-    return EEG_CHAIN_COLORS[chain];
+    return theme === "light" ? LIGHT_EEG_CHAIN_COLORS[chain] : EEG_CHAIN_COLORS[chain];
   }
-  return stableTraceColor(id, kind, laterality);
+  const fallbackChain: keyof typeof EEG_CHAIN_COLORS =
+    laterality === "left"
+      ? "left-parasagittal"
+      : laterality === "right"
+        ? "right-parasagittal"
+        : laterality === "midline"
+          ? "midline"
+          : "unknown";
+  return theme === "light"
+    ? LIGHT_EEG_CHAIN_COLORS[fallbackChain]
+    : stableTraceColor(id, kind, laterality);
 }
 
 function laneLayout(
@@ -230,10 +358,10 @@ function sizeCanvas(canvas: HTMLCanvasElement, cssW: number, cssH: number, dpr: 
   }
 }
 
-function clearWaveformCanvas(ctx: CanvasRenderingContext2D, cssW: number, cssH: number, dpr: number) {
+function clearWaveformCanvas(ctx: CanvasRenderingContext2D, cssW: number, cssH: number, dpr: number, theme: ResolvedTheme) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
-  ctx.fillStyle = "#07080a";
+  ctx.fillStyle = CANVAS_PALETTES[theme].bg;
   ctx.fillRect(0, 0, cssW, cssH);
 }
 
@@ -332,7 +460,9 @@ function drawLaneLabel(
   laneHeight: number,
   color: string,
   hidden = false,
+  theme: ResolvedTheme = "dark",
 ) {
+  const palette = CANVAS_PALETTES[theme];
   const fontSize = hidden ? Math.min(11, Math.max(9, laneHeight - 10)) : Math.min(16, Math.max(13, laneHeight - 18));
   const font = `${hidden ? 600 : 750} ${fontSize}px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace`;
   ctx.save();
@@ -343,17 +473,17 @@ function drawLaneLabel(
   const padX = hidden ? 5 : 7;
   const padY = hidden ? 3 : 4;
   const textWidth = ctx.measureText(text).width;
-  // Use the same dark plot background as the canvas rather than translucency;
+  // Use the same plot background as the canvas rather than translucency;
   // even high-amplitude traces are fully cleared behind the name.
-  ctx.fillStyle = "#07080a";
+  ctx.fillStyle = palette.labelBg;
   ctx.fillRect(x, mid - fontSize / 2 - padY, textWidth + padX * 2 + 3, fontSize + padY * 2);
   if (!hidden) {
     ctx.fillStyle = color;
     ctx.fillRect(x, mid - fontSize / 2 - padY, 3, fontSize + padY * 2);
-    ctx.fillStyle = "#f1f4f7";
+    ctx.fillStyle = palette.labelText;
     ctx.fillText(text, x + padX + 2, mid);
   } else {
-    ctx.fillStyle = "#aeb6c2";
+    ctx.fillStyle = palette.labelHiddenText;
     ctx.fillText(text, x + padX, mid);
   }
   ctx.restore();
@@ -398,7 +528,9 @@ function drawInlineAnnotationLabel(
   _viewDuration: number,
   cssW: number,
   cssH: number,
+  theme: ResolvedTheme = "dark",
 ) {
+  const palette = CANVAS_PALETTES[theme];
   const text = annotationInlineLabel(annotation);
   const font = "700 12px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
   const padX = 8;
@@ -439,18 +571,18 @@ function drawInlineAnnotationLabel(
   if (y + height > laneBottom - 2) y = Math.max(laneTop + 1, laneBottom - height - 2);
   y = clamp(y, 1, Math.max(1, cssH - height - 1));
 
-  const color = MORPH_COLOR[annotation.type] ?? "#c8ccd4";
+  const color = annotationColorForTheme(annotation.type, theme);
   ctx.globalAlpha = 1;
   // The label sits on top of a live trace, so a translucent fill is too easy
-  // to lose. Use an opaque plate and a dark outer keyline before the semantic
+  // to lose. Use an opaque plate and a contrasting outer keyline before the semantic
   // color border; this keeps both the text and the marker identity legible on
   // bright, high-amplitude waveforms.
   ctx.shadowColor = `${color}66`;
   ctx.shadowBlur = 6;
-  ctx.fillStyle = "#06080b";
+  ctx.fillStyle = palette.annotationBg;
   ctx.fillRect(x, y, labelWidth, height);
   ctx.shadowBlur = 0;
-  ctx.strokeStyle = "#020305";
+  ctx.strokeStyle = palette.keyline;
   ctx.lineWidth = 4;
   ctx.strokeRect(x + 2, y + 2, Math.max(1, labelWidth - 4), height - 4);
   ctx.strokeStyle = color;
@@ -458,7 +590,7 @@ function drawInlineAnnotationLabel(
   ctx.strokeRect(x + 1, y + 1, Math.max(1, labelWidth - 2), height - 2);
   ctx.fillStyle = color;
   ctx.fillRect(x + 1, y + 1, 4, height - 2);
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = palette.annotationText;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   ctx.fillText(labelText, x + padX + 3, y + height / 2);
@@ -472,7 +604,9 @@ function drawAnnotationStartLine(
   source: Annotation["source"],
   selected: boolean,
   cssH: number,
+  theme: ResolvedTheme = "dark",
 ) {
+  const palette = CANVAS_PALETTES[theme];
   // Give every marker a visible time anchor, including channel-specific
   // annotations. A dark under-stroke preserves contrast over both quiet and
   // saturated traces; the colored stroke above it keeps the annotation
@@ -481,7 +615,7 @@ function drawAnnotationStartLine(
   const lineWidth = selected ? 2.5 : 1.5;
   ctx.save();
   ctx.globalAlpha = selected ? 0.95 : 0.82;
-  ctx.strokeStyle = "#020305";
+  ctx.strokeStyle = palette.keyline;
   ctx.lineWidth = lineWidth + 2.5;
   ctx.setLineDash([]);
   ctx.beginPath();
@@ -510,7 +644,7 @@ function niceStep(span: number): number {
   return 60;
 }
 
-export function WaveformView() {
+export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: ResolvedTheme }) {
   const overviewRef = useRef<HTMLCanvasElement>(null);
   const overviewOverlayRef = useRef<HTMLCanvasElement>(null);
   const editorRef = useRef<HTMLCanvasElement>(null);
@@ -676,7 +810,7 @@ export function WaveformView() {
             width: cssW,
             height: cssH,
             dpr,
-            trackStateKey: Object.values(s.tracks)
+            trackStateKey: `${effectiveTheme}|` + Object.values(s.tracks)
               .map((tr) => `${tr.id}:${tr.mute ? 1 : 0}${tr.solo ? 1 : 0}`)
               .join(",") + `|hidden:${s.hiddenTrackIds.join(",")}`,
           });
@@ -692,6 +826,7 @@ export function WaveformView() {
               viewEnd,
               displayStart,
               hoveredTrackRef.current,
+              effectiveTheme,
             );
           }
           drawEditorOverlay(
@@ -712,9 +847,10 @@ export function WaveformView() {
             s.hoverCursor,
             laneLayout(editorList, Math.max(1, cssH - RULER), s.hiddenTrackIds),
             hoveredAnnotationRef.current,
+            effectiveTheme,
           );
           if (!editorReady && waveSig !== "waiting-for-display-window") {
-            clearWaveformCanvas(ectx, cssW, cssH, dpr);
+            clearWaveformCanvas(ectx, cssW, cssH, dpr, effectiveTheme);
             waveSig = "waiting-for-display-window";
           }
         }
@@ -736,11 +872,11 @@ export function WaveformView() {
             width: ovW,
             height: ovH,
             dpr,
-            trackStateKey: `overview|hidden:${s.hiddenTrackIds.join(",")}`,
+            trackStateKey: `${effectiveTheme}|overview|hidden:${s.hiddenTrackIds.join(",")}`,
           });
           if (osig !== ovSig) {
             ovSig = osig;
-            drawOverviewWaves(ctx, ovW, ovH, overviewList, s, total);
+            drawOverviewWaves(ctx, ovW, ovH, overviewList, s, total, effectiveTheme);
           }
           drawOverviewOverlay(
             octx,
@@ -753,6 +889,7 @@ export function WaveformView() {
             s.annotations,
             s.showAuto,
             s.showAnnotations,
+            effectiveTheme,
           );
         }
       }
@@ -763,12 +900,12 @@ export function WaveformView() {
         const ctx = dsa.getContext("2d");
         const octx = dsaOv.getContext("2d");
         if (ctx && octx) {
-          const sig = `${s.dsa?.nTime ?? 0}|${s.dsa?.dbMin ?? 0}|${s.dsa?.dbMax ?? 0}|${dsaW}|${dsaH}`;
+          const sig = `${effectiveTheme}|${s.dsa?.nTime ?? 0}|${s.dsa?.dbMin ?? 0}|${s.dsa?.dbMax ?? 0}|${dsaW}|${dsaH}`;
           if (sig !== dsaSig) {
             dsaSig = sig;
-            drawDsa(ctx, dsa, dsaW, dsaH, s.dsa);
+            drawDsa(ctx, dsa, dsaW, dsaH, s.dsa, effectiveTheme);
           }
-          drawDsaOverlay(octx, dsaW, dsaH, t, viewStart, viewDur, total);
+          drawDsaOverlay(octx, dsaW, dsaH, t, viewStart, viewDur, total, effectiveTheme);
         }
       }
     };
@@ -813,7 +950,7 @@ export function WaveformView() {
       unsub();
       ro.disconnect();
     };
-  }, []);
+  }, [effectiveTheme]);
 
   const onEditorPointer = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!segment || !wrapRef.current) return;
@@ -1251,6 +1388,7 @@ export function WaveformView() {
                   count={list.length}
                   compact={list.length > 16}
                   lane={renderedLanes[index]}
+                  theme={effectiveTheme}
                 />
               ))}
             </div>
@@ -1285,7 +1423,9 @@ function drawEditor(
   viewEnd: number,
   sampleStart: number,
   hoveredTrackId: string | null,
+  theme: ResolvedTheme = "dark",
 ) {
+  const palette = CANVAS_PALETTES[theme];
   ctx.setTransform(
     Math.min(2, window.devicePixelRatio || 1),
     0,
@@ -1296,7 +1436,7 @@ function drawEditor(
   );
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, cssW, cssH);
-  ctx.fillStyle = "#07080a";
+  ctx.fillStyle = palette.bg;
   ctx.fillRect(0, 0, cssW, cssH);
 
   const plotX = GUTTER;
@@ -1311,9 +1451,9 @@ function drawEditor(
   const localViewStart = viewStart - sampleStart;
   const localViewEnd = viewEnd - sampleStart;
 
-  ctx.fillStyle = "#101216";
+  ctx.fillStyle = palette.ruler;
   ctx.fillRect(0, 0, cssW, RULER);
-  ctx.strokeStyle = "rgba(232,234,237,0.08)";
+  ctx.strokeStyle = palette.gridStrong;
   ctx.beginPath();
   ctx.moveTo(0, RULER - 0.5);
   ctx.lineTo(cssW, RULER - 0.5);
@@ -1322,16 +1462,16 @@ function drawEditor(
   const step = niceStep(span);
   const t0 = Math.ceil(viewStart / step) * step;
   ctx.font = "500 10px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
-  ctx.fillStyle = "#8b919c";
+  ctx.fillStyle = palette.muted;
   ctx.textBaseline = "middle";
   for (let t = t0; t <= viewEnd + 1e-6; t += step) {
     const x = plotX + ((t - viewStart) / span) * plotW;
-    ctx.strokeStyle = "rgba(232,234,237,0.06)";
+    ctx.strokeStyle = palette.grid;
     ctx.beginPath();
     ctx.moveTo(x, RULER);
     ctx.lineTo(x, cssH);
     ctx.stroke();
-    ctx.strokeStyle = "rgba(232,234,237,0.22)";
+    ctx.strokeStyle = palette.gridStrong;
     ctx.beginPath();
     ctx.moveTo(x, RULER - 5);
     ctx.lineTo(x, RULER);
@@ -1354,15 +1494,15 @@ function drawEditor(
     if (i > 0 && lane.top > (lanes[i - 1]?.top ?? 0) + (lanes[i - 1]?.height ?? 0)) {
       // Mark the larger inter-chain spacer so neighboring longitudinal chains
       // remain visually distinct while annotations stay aligned to each lane.
-      ctx.fillStyle = "rgba(232,234,237,0.13)";
+      ctx.fillStyle = palette.spacer;
       ctx.fillRect(0, y0 - (lane.top - (lanes[i - 1]?.top ?? 0) - (lanes[i - 1]?.height ?? 0)), cssW, lane.top - (lanes[i - 1]?.top ?? 0) - (lanes[i - 1]?.height ?? 0));
     }
-    ctx.strokeStyle = "rgba(232,234,237,0.05)";
+    ctx.strokeStyle = palette.laneMid;
     ctx.beginPath();
     ctx.moveTo(plotX, mid);
     ctx.lineTo(plotX + plotW, mid);
     ctx.stroke();
-    ctx.strokeStyle = "rgba(232,234,237,0.06)";
+    ctx.strokeStyle = palette.laneBottom;
     ctx.beginPath();
     ctx.moveTo(0, y0 + laneHeight);
     ctx.lineTo(cssW, y0 + laneHeight);
@@ -1372,23 +1512,23 @@ function drawEditor(
       // A hidden channel keeps its lane so every remaining trace, annotation,
       // and group boundary stays at the same vertical position. The gutter's
       // eye button is the one-click restore affordance for this placeholder.
-      ctx.fillStyle = "rgba(232,234,237,0.025)";
+      ctx.fillStyle = palette.hiddenFill;
       ctx.fillRect(plotX, y0 + 1, plotW, Math.max(1, laneHeight - 2));
-      ctx.strokeStyle = "rgba(232,234,237,0.16)";
+      ctx.strokeStyle = palette.hiddenLine;
       ctx.setLineDash([3, 4]);
       ctx.beginPath();
       ctx.moveTo(plotX + 8, mid);
       ctx.lineTo(plotX + plotW - 8, mid);
       ctx.stroke();
       ctx.setLineDash([]);
-      if (laneHeight >= 16) drawLaneLabel(ctx, tr.label, plotX + 8, mid, laneHeight, "#747d89", true);
+      if (laneHeight >= 16) drawLaneLabel(ctx, tr.label, plotX + 8, mid, laneHeight, palette.muted, true, theme);
       return;
     }
 
     const st = s.tracks[tr.id];
     const live = audible.has(tr.id);
     const lat = st?.lateralityOverride ?? tr.laterality;
-    const color = traceColorForLane(laneGroup(tr, i, list), tr.kind, lat, tr.id);
+    const color = traceColorForLane(laneGroup(tr, i, list), tr.kind, lat, tr.id, theme);
     const hovered = hoveredTrackId === tr.id;
     const alpha = hovered
       ? 1
@@ -1426,7 +1566,7 @@ function drawEditor(
     // The label is part of the lane, not part of the utility gutter. It is
     // deliberately painted after the trace to provide a clean, stable name
     // plate at the start of every waveform.
-    drawLaneLabel(ctx, tr.label, plotX + 8, mid, laneHeight, color);
+    drawLaneLabel(ctx, tr.label, plotX + 8, mid, laneHeight, color, false, theme);
   });
 
 }
@@ -1449,7 +1589,9 @@ function drawEditorOverlay(
   hoverCursor: { timeSec: number; trackId: string | null } | null = null,
   lanes: LaneRect[] = [],
   hoveredAnnotationId: string | null = null,
+  theme: ResolvedTheme = "dark",
 ) {
+  const palette = CANVAS_PALETTES[theme];
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
@@ -1480,7 +1622,7 @@ function drawEditorOverlay(
     for (const layout of layouts) {
       const annotation = visible.find((item) => item.id === layout.id);
       if (!annotation) continue;
-      const color = MORPH_COLOR[annotation.type] ?? "#c8ccd4";
+      const color = annotationColorForTheme(annotation.type, theme);
       const selectedAlpha = layout.selected ? 0.24 : 0.12;
       ctx.fillStyle = color;
       ctx.globalAlpha = selectedAlpha;
@@ -1504,7 +1646,7 @@ function drawEditorOverlay(
       // it starts at the left edge.
       const startsInView = annotation.start >= viewStart - 1e-6 && annotation.start <= viewEnd + 1e-6;
       if (startsInView) {
-        drawAnnotationStartLine(ctx, layout.x0, color, annotation.source, layout.selected, cssH);
+        drawAnnotationStartLine(ctx, layout.x0, color, annotation.source, layout.selected, cssH, theme);
       }
       // Keep the event-rail end edge for regions. The start edge above is the
       // full-height anchor; this short edge avoids adding a second full-height
@@ -1521,7 +1663,7 @@ function drawEditorOverlay(
         ctx.setLineDash([]);
       }
       if (layout.id === hoveredAnnotationId) {
-        drawInlineAnnotationLabel(ctx, annotation, layout, plotX, plotW, viewStart, viewDur, cssW, cssH);
+        drawInlineAnnotationLabel(ctx, annotation, layout, plotX, plotW, viewStart, viewDur, cssW, cssH, theme);
       }
     }
     ctx.globalAlpha = 1;
@@ -1529,9 +1671,9 @@ function drawEditorOverlay(
   if (caliper) {
     const xa = plotX + clamp((caliper.a - viewStart) / Math.max(1e-6, viewDur), 0, 1) * plotW;
     const xb = plotX + clamp((caliper.b - viewStart) / Math.max(1e-6, viewDur), 0, 1) * plotW;
-    ctx.fillStyle = "rgba(126,184,201,0.12)";
+    ctx.fillStyle = palette.overlayFill;
     ctx.fillRect(Math.min(xa, xb), 0, Math.abs(xb - xa), cssH);
-    ctx.strokeStyle = "rgba(126,184,201,0.95)";
+    ctx.strokeStyle = palette.accent;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(xa, 0);
@@ -1539,7 +1681,7 @@ function drawEditorOverlay(
     ctx.moveTo(xb, 0);
     ctx.lineTo(xb, cssH);
     ctx.stroke();
-    ctx.fillStyle = "#d7dde6";
+    ctx.fillStyle = palette.text;
     ctx.font = "500 11px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
     const dt = Math.abs(caliper.b - caliper.a);
     const hz = dt > 1e-4 ? 1 / dt : 0;
@@ -1561,7 +1703,7 @@ function drawEditorOverlay(
   }
   if (hoverCursor && hoverCursor.timeSec >= viewStart && hoverCursor.timeSec <= viewEnd) {
     const hoverX = plotX + ((hoverCursor.timeSec - viewStart) / Math.max(1e-6, viewDur)) * plotW;
-    ctx.strokeStyle = "rgba(126,184,201,0.8)";
+    ctx.strokeStyle = palette.accent;
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
@@ -1574,7 +1716,7 @@ function drawEditorOverlay(
       const lane = laneIds.indexOf(hoverCursor.trackId);
       if (lane >= 0) {
         const laneHeight = Math.max(1, (cssH - RULER) / Math.max(1, laneIds.length));
-        ctx.fillStyle = "rgba(126,184,201,0.08)";
+        ctx.fillStyle = palette.overlayFill;
         const rect = lanes[lane] ?? { top: lane * laneHeight, height: laneHeight };
         ctx.fillRect(plotX, RULER + rect.top, plotW, rect.height);
       }
@@ -1583,13 +1725,13 @@ function drawEditorOverlay(
   if (t < viewStart || t > viewStart + viewDur) return;
   const frac = (t - viewStart) / Math.max(1e-6, viewDur);
   const x = plotX + clamp(frac, 0, 1) * plotW;
-  ctx.strokeStyle = "rgba(232,234,237,0.9)";
+  ctx.strokeStyle = palette.cursor;
   ctx.lineWidth = 1.25;
   ctx.beginPath();
   ctx.moveTo(x, 0);
   ctx.lineTo(x, cssH);
   ctx.stroke();
-  ctx.fillStyle = "rgba(232,234,237,0.9)";
+  ctx.fillStyle = palette.cursor;
   ctx.beginPath();
   ctx.moveTo(x - 5, 0);
   ctx.lineTo(x + 5, 0);
@@ -1605,10 +1747,12 @@ function drawOverviewWaves(
   list: ProcessedTrack[],
   s: ReturnType<typeof useEegStore.getState>,
   total: number,
+  theme: ResolvedTheme = "dark",
 ) {
+  const palette = CANVAS_PALETTES[theme];
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = "#101216";
+  ctx.fillStyle = palette.ruler;
   ctx.fillRect(0, 0, cssW, cssH);
   if (list.length === 0 || total <= 0) return;
   const nPix = Math.max(1, Math.ceil(cssW * dpr));
@@ -1625,9 +1769,9 @@ function drawOverviewWaves(
     if (s.hiddenTrackIds.includes(tr.id)) {
       // Keep the hidden channel in order while collapsing its overview row to
       // the same compact height used by the editor.
-      ctx.fillStyle = "rgba(232,234,237,0.04)";
+      ctx.fillStyle = palette.hiddenFill;
       ctx.fillRect(0, y0 + 1, cssW, Math.max(1, rowHeight - 2));
-      ctx.strokeStyle = "rgba(232,234,237,0.16)";
+      ctx.strokeStyle = palette.hiddenLine;
       ctx.setLineDash([2, 3]);
       ctx.beginPath();
       ctx.moveTo(4, mid);
@@ -1650,7 +1794,7 @@ function drawOverviewWaves(
         }
       : raw;
     const scale = displayScaleForChannel(rowHeight, s.sensitivityUv, tr.kind, profile);
-    ctx.strokeStyle = traceColorForLane(laneGroup(tr, i, list), tr.kind, lat, tr.id);
+    ctx.strokeStyle = traceColorForLane(laneGroup(tr, i, list), tr.kind, lat, tr.id, theme);
     // The overview is a navigation aid, not a full-resolution trace. Drawing
     // a min/max bar at every pixel turns dense recordings into a solid block
     // of color, so use a light connected envelope and only a sparse set of
@@ -1688,7 +1832,7 @@ function drawOverviewWaves(
     ctx.stroke();
     ctx.globalAlpha = 1;
   });
-  ctx.fillStyle = "#5c6370";
+  ctx.fillStyle = palette.muted;
   ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
   ctx.textBaseline = "bottom";
   const step = niceStep(total);
@@ -1709,7 +1853,9 @@ function drawOverviewOverlay(
   annotations: Annotation[] = [],
   showAuto = true,
   showAnnotations = true,
+  theme: ResolvedTheme = "dark",
 ) {
+  const palette = CANVAS_PALETTES[theme];
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
@@ -1718,22 +1864,22 @@ function drawOverviewOverlay(
     for (const a of annotations) {
       if (a.source === "auto" && (a.type === "qrs" || !showAuto)) continue;
       const x = (a.start / total) * cssW;
-      ctx.fillStyle = MORPH_COLOR[a.type] ?? "#c8ccd4";
+      ctx.fillStyle = annotationColorForTheme(a.type, theme);
       ctx.fillRect(x, 0, 2, cssH);
     }
   }
   const x0 = (viewStart / total) * cssW;
   const x1 = ((viewStart + viewDur) / total) * cssW;
-  ctx.fillStyle = "rgba(126,184,201,0.14)";
+  ctx.fillStyle = palette.overlayFill;
   ctx.fillRect(x0, 0, Math.max(2, x1 - x0), cssH);
-  ctx.strokeStyle = "rgba(126,184,201,0.9)";
+  ctx.strokeStyle = palette.accent;
   ctx.lineWidth = 1.25;
   ctx.strokeRect(x0 + 0.5, 0.5, Math.max(2, x1 - x0 - 1), cssH - 1);
-  ctx.fillStyle = "rgba(126,184,201,0.9)";
+  ctx.fillStyle = palette.accent;
   ctx.fillRect(x0 - 1, 0, 3, cssH);
   ctx.fillRect(x1 - 2, 0, 3, cssH);
 
-  ctx.strokeStyle = "rgba(232,234,237,0.95)";
+  ctx.strokeStyle = palette.cursor;
   ctx.lineWidth = 1.25;
   ctx.beginPath();
   const px = (t / total) * cssW;
@@ -1748,10 +1894,12 @@ function drawDsa(
   cssW: number,
   cssH: number,
   frame: DsaFrame | null,
+  theme: ResolvedTheme = "dark",
 ) {
+  const palette = CANVAS_PALETTES[theme];
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = "#07080a";
+  ctx.fillStyle = palette.bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (!frame || frame.nTime < 1 || frame.nFreq < 2) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1788,13 +1936,13 @@ function drawDsa(
   }
   ctx.putImageData(img, Math.round(DSA_LEFT * dpr), Math.round(DSA_TOP * dpr));
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.strokeStyle = "rgba(232,234,237,0.18)";
+  ctx.strokeStyle = palette.gridStrong;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(DSA_LEFT, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) / 2);
   ctx.lineTo(cssW - DSA_RIGHT, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) / 2);
   ctx.stroke();
-  ctx.fillStyle = "#8b919c";
+  ctx.fillStyle = palette.muted;
   ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
   ctx.textBaseline = "middle";
   ctx.fillText("L", 7, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.25);
@@ -1819,7 +1967,7 @@ function drawDsa(
   }
   ctx.fillStyle = gradient;
   ctx.fillRect(legendX, legendY, legendW, 5);
-  ctx.fillStyle = "#8b919c";
+  ctx.fillStyle = palette.muted;
   ctx.textBaseline = "top";
   ctx.fillText(`${Math.round(frame.dbMax)} dB`, legendX, legendY + 8);
   ctx.textAlign = "right";
@@ -1842,7 +1990,9 @@ function drawDsaOverlay(
   viewStart: number,
   viewDur: number,
   total: number,
+  theme: ResolvedTheme = "dark",
 ) {
+  const palette = CANVAS_PALETTES[theme];
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
@@ -1853,18 +2003,18 @@ function drawDsaOverlay(
   const x1 = plotX(viewStart + viewDur);
   const plotTop = DSA_TOP;
   const plotH = Math.max(1, cssH - DSA_TOP - DSA_BOTTOM);
-  ctx.fillStyle = "rgba(232,234,237,0.06)";
+  ctx.fillStyle = palette.overlayFill;
   ctx.fillRect(x0, plotTop, Math.max(2, x1 - x0), plotH);
-  ctx.strokeStyle = "rgba(232,234,237,0.45)";
+  ctx.strokeStyle = palette.overlayStroke;
   ctx.lineWidth = 1;
   ctx.strokeRect(x0 + 0.5, plotTop + 0.5, Math.max(2, x1 - x0 - 1), plotH - 1);
-  ctx.strokeStyle = "rgba(232,234,237,0.95)";
+  ctx.strokeStyle = palette.cursor;
   ctx.lineWidth = 1.25;
   ctx.beginPath();
   ctx.moveTo(plotX(t), plotTop);
   ctx.lineTo(plotX(t), plotTop + plotH);
   ctx.stroke();
-  ctx.fillStyle = "rgba(232,234,237,0.9)";
+  ctx.fillStyle = palette.cursor;
   ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
   ctx.textBaseline = "bottom";
   ctx.fillText(
@@ -1882,6 +2032,7 @@ function TrackGutter({
   count,
   compact,
   lane,
+  theme,
 }: {
   track: ProcessedTrack;
   previous?: ProcessedTrack;
@@ -1890,6 +2041,7 @@ function TrackGutter({
   count: number;
   compact: boolean;
   lane?: LaneRect;
+  theme: ResolvedTheme;
 }) {
   const st = useEegStore((s) => s.tracks[track.id]) as TrackState | undefined;
   const toggleMute = useEegStore((s) => s.toggleMute);
@@ -1899,7 +2051,7 @@ function TrackGutter({
   const hidden = useEegStore((s) => s.hiddenTrackIds.includes(track.id));
   const toggleTrackVisibility = useEegStore((s) => s.toggleTrackVisibility);
   const lat = st?.lateralityOverride ?? track.laterality;
-  const color = traceColorForLane(group, track.kind, lat, track.id);
+  const color = traceColorForLane(group, track.kind, lat, track.id, theme);
   const muted = Boolean(st?.mute);
   const solo = Boolean(st?.solo);
   return (

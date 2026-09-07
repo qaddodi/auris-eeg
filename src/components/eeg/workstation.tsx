@@ -18,10 +18,19 @@ import { useEditorKeys } from "./use-editor-keys";
 import { SHORTCUTS } from "@/lib/eeg/shortcuts";
 import { buildSyntheticEdf } from "@/lib/eeg/synthetic";
 import { useEegStore } from "@/store/eeg-store";
+import {
+  nextThemeMode,
+  systemTheme,
+  type ResolvedTheme,
+  type ThemeMode,
+} from "./theme";
 
 export function Workstation() {
   const [panel, setPanel] = useState(false);
   const [focusEeg, setFocusEeg] = useState(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>("auto");
+  const [systemColorTheme, setSystemColorTheme] = useState<ResolvedTheme>(() => systemTheme());
+  const effectiveTheme: ResolvedTheme = themeMode === "auto" ? systemColorTheme : themeMode;
   const aboutOpen = useEegStore((s) => s.aboutOpen);
   const setAboutOpen = useEegStore((s) => s.setAboutOpen);
   const keysOpen = useEegStore((s) => s.keysOpen);
@@ -34,6 +43,28 @@ export function Workstation() {
   const fileRef = useRef<HTMLInputElement>(null);
   const toggleFocusEeg = useCallback(() => setFocusEeg((value) => !value), []);
   useEditorKeys(toggleFocusEeg);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    const update = () => setSystemColorTheme(media.matches ? "light" : "dark");
+    update();
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", update);
+      return () => media.removeEventListener?.("change", update);
+    }
+    media.addListener?.(update);
+    return () => media.removeListener?.(update);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = effectiveTheme;
+    document.documentElement.style.colorScheme = effectiveTheme;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute(
+      "content",
+      effectiveTheme === "light" ? "#f6f8fa" : "#07080a",
+    );
+  }, [effectiveTheme]);
 
   useEffect(() => {
     if (status !== "idle" || demoStarted.current) return;
@@ -66,18 +97,18 @@ export function Workstation() {
     >
       <input ref={fileRef} type="file" accept=".edf,.EDF" className="sr-only" onChange={onFile} />
       {!focusEeg && (
-        <>
-          <Transport
-            onOpenFile={() => fileRef.current?.click()}
-            onTogglePanel={togglePanel}
-            onToggleFocus={toggleFocusEeg}
-            onToggleFullscreen={() => {
-              if (!document.fullscreenElement) void document.documentElement.requestFullscreen?.();
-              else void document.exitFullscreen?.();
-            }}
-            onAbout={() => setAboutOpen(true)}
-          />
-        </>
+        <Transport
+          onOpenFile={() => fileRef.current?.click()}
+          onTogglePanel={togglePanel}
+          onToggleFocus={toggleFocusEeg}
+          onToggleFullscreen={() => {
+            if (!document.fullscreenElement) void document.documentElement.requestFullscreen?.();
+            else void document.exitFullscreen?.();
+          }}
+          onAbout={() => setAboutOpen(true)}
+          themeMode={themeMode}
+          onCycleTheme={() => setThemeMode((mode) => nextThemeMode(mode))}
+        />
       )}
 
       <div className="relative flex min-h-0 flex-1">
@@ -102,7 +133,7 @@ export function Workstation() {
           />
         )}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <WaveformView />
+          <WaveformView effectiveTheme={effectiveTheme} />
         </div>
       </div>
 

@@ -41,6 +41,35 @@
   --motion-fast: 250ms;
 }
 
+/* The default tokens are the low-glare dark workstation palette. Light mode
+ * overrides the same semantic tokens so every Tailwind surface follows the
+ * session theme without duplicating component styles. */
+[data-theme="light"] {
+  --color-bg: #f6f8fa;
+  --color-surface: #ffffff;
+  --color-surface-2: #edf1f4;
+  --color-fg: #17232c;
+  --color-muted: #53636f;
+  --color-subtle: #687985;
+  --color-border: rgb(23 35 44 / 16%);
+  --color-accent: #146b83;
+  --color-accent-fg: #ffffff;
+  --color-hemi-l: #087f9b;
+  --color-hemi-r: #9a6011;
+  --color-hemi-c: #53636f;
+  --color-band-delta: #315fb4;
+  --color-band-theta: #087a79;
+  --color-band-alpha: #21823c;
+  --color-band-beta: #9a6011;
+  --color-band-gamma: #ad3d3d;
+  --color-warn: #92600b;
+  --color-danger: #a83232;
+  --color-ok: #26754a;
+  --shadow-border: 0 0 0 1px rgb(23 35 44 / 12%);
+  --shadow-border-hover: 0 0 0 1px rgb(23 35 44 / 22%);
+  color-scheme: light;
+}
+
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;
@@ -87,6 +116,33 @@
   select {
     color-scheme: dark;
     font-size: 0.75rem;
+  }
+
+  select option {
+    background-color: var(--color-surface);
+    color: var(--color-fg);
+  }
+
+  [data-theme="light"] select {
+    color-scheme: light;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--color-muted) 36%, transparent);
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--color-muted) 56%, transparent);
   }
 
   ::selection {

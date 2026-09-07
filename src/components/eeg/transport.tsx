@@ -28,6 +28,9 @@ import {
   VolumeX,
   ZoomIn,
   ZoomOut,
+  Monitor,
+  Moon,
+  Sun,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { VIEW_PRESETS } from "@/lib/eeg/view";
@@ -35,6 +38,7 @@ import { HFF_PRESETS, LFF_PRESETS, SENSITIVITY_PRESETS } from "@/lib/eeg/default
 import type { MontageKind } from "@/lib/eeg/types";
 import { formatTime } from "@/lib/utils";
 import { eegNow, useEegStore } from "@/store/eeg-store";
+import { nextThemeMode, type ThemeMode } from "./theme";
 
 interface TransportProps {
   onOpenFile: () => void;
@@ -42,6 +46,8 @@ interface TransportProps {
   onToggleFocus: () => void;
   onToggleFullscreen: () => void;
   onAbout: () => void;
+  themeMode: ThemeMode;
+  onCycleTheme: () => void;
 }
 
 const selectClass =
@@ -56,6 +62,8 @@ export function Transport({
   onToggleFocus,
   onToggleFullscreen,
   onAbout,
+  themeMode,
+  onCycleTheme,
 }: TransportProps) {
   const playing = useEegStore((s) => s.playing);
   const loop = useEegStore((s) => s.loop);
@@ -119,6 +127,9 @@ export function Transport({
     ((soundMode === "evidence" || soundMode === "hybrid") && Boolean(evidencePreparation));
   const confirmed = annotations.filter((a) => a.source !== "auto").length;
   const suggestions = annotations.filter((a) => a.source === "auto" && a.type !== "qrs").length;
+  const nextMode = nextThemeMode(themeMode);
+  const themeLabel = themeMode[0]!.toUpperCase() + themeMode.slice(1);
+  const nextModeLabel = nextMode[0]!.toUpperCase() + nextMode.slice(1);
 
   return (
     <div className="transport-bar flex h-12 shrink-0 min-w-0 items-center overflow-x-auto overflow-y-hidden border-b border-border bg-surface px-2 [scrollbar-width:thin] sm:px-3">
@@ -262,6 +273,16 @@ export function Transport({
         </div>
 
         <span className="ml-2 shrink-0 border-l border-border pl-2 font-mono text-xs tabular-nums text-muted">EEG <span ref={eegRef} className="text-fg">{formatTime(playheadEeg, true)}</span></span>
+        <Button
+          size="iconSm"
+          variant="ghost"
+          className="ml-1 shrink-0"
+          aria-label={`Theme: ${themeLabel}. Switch to ${nextModeLabel} mode`}
+          title={`Theme: ${themeLabel} · Switch to ${nextModeLabel}`}
+          onClick={onCycleTheme}
+        >
+          {themeMode === "auto" ? <Monitor aria-hidden="true" /> : themeMode === "light" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+        </Button>
       </div>
     </div>
   );
