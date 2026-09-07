@@ -1,0 +1,5 @@
+{
+  "ok": false,
+  "url": "http://127.0.0.1:4173/auris-eeg/",
+  "error": "browserType.launch: Executable doesn't exist at /Users/qaddodi/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell\n╔════════════════════════════════════════════════════════════╗\n║ Looks like Playwright was just installed or updated.       ║\n║ Please run the following command to download new browsers: ║\n║                                                            ║\n║     npx playwright install                                 ║\n║                                                            ║\n║ <3 Playwright Team                                         ║\n╚════════════════════════════════════════════════════════════╝"
+}
