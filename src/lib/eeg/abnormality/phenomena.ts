@@ -17,6 +17,8 @@ export interface PhenomenonChannel {
   sampleRate: number;
   kind: ChannelKind | "unknown";
   laterality: Laterality;
+  /** Electrode names participating in a referential or bipolar derivation. */
+  sources?: readonly string[];
 }
 
 export interface PhenomenonEvidence {
@@ -131,14 +133,22 @@ function rms(values: readonly number[]): number {
   return Math.sqrt(mean(values.map((value) => value * value)));
 }
 
-function channelName(channel: PhenomenonChannel): string {
-  return (channel.canonical ?? channel.label).toUpperCase().replace(/[^A-Z0-9]/g, "");
+function electrodeName(value: string): string {
+  const key = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return ({ T3: "T7", T4: "T8", T5: "P7", T6: "P8" } as Record<string, string>)[key] ?? key;
+}
+
+function channelNames(channel: PhenomenonChannel): string[] {
+  if (channel.sources?.length) return channel.sources.map(electrodeName).filter(Boolean);
+  const labelParts = channel.label.split(/[-–—]/).map(electrodeName).filter(Boolean);
+  if (labelParts.length > 1) return labelParts;
+  return [electrodeName(channel.canonical ?? channel.label)].filter(Boolean);
 }
 
 function areAdjacent(left: PhenomenonChannel, right: PhenomenonChannel): boolean {
-  const a = channelName(left);
-  const b = channelName(right);
-  return a === b || ADJACENT[a]?.includes(b) === true || ADJACENT[b]?.includes(a) === true;
+  return channelNames(left).some((a) => channelNames(right).some((b) =>
+    a === b || ADJACENT[a]?.includes(b) === true || ADJACENT[b]?.includes(a) === true,
+  ));
 }
 
 function valuesOf(channel: PhenomenonChannel, start = 0, end = channel.samples.length): number[] {

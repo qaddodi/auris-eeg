@@ -95,6 +95,7 @@ export function Transport({
   const setShowAnnotations = useEegStore((s) => s.setShowAnnotations);
   const annotations = useEegStore((s) => s.annotations);
   const showAuto = useEegStore((s) => s.showAuto);
+  const screeningBusy = useEegStore((s) => s.screeningBusy);
   const setShowAuto = useEegStore((s) => s.setShowAuto);
   const showDsa = useEegStore((s) => s.showDsa);
   const setShowDsa = useEegStore((s) => s.setShowDsa);
@@ -250,8 +251,8 @@ export function Transport({
           <Button size="sm" variant={showAnnotations ? "default" : "ghost"} className={toolClass} aria-pressed={showAnnotations} aria-label={`${showAnnotations ? "Hide" : "Show"} markers (${confirmed})`} title={`${showAnnotations ? "Hide" : "Show"} markers`} onClick={() => setShowAnnotations(!showAnnotations)}>
             {showAnnotations ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />} Markers <Count>{confirmed}</Count>
           </Button>
-          <Button size="sm" variant={showAuto ? "default" : "ghost"} className={toolClass} aria-pressed={showAuto} aria-label={`${showAuto ? "Hide" : "Show"} rule-based non-diagnostic review candidates (${suggestions})`} title={`${showAuto ? "Hide" : "Show"} rule-based review candidates`} onClick={() => setShowAuto(!showAuto)}>
-            <Lightbulb aria-hidden="true" /> Review cues <Count>{suggestions}</Count>
+          <Button size="sm" variant={showAuto ? "default" : "ghost"} className={toolClass} aria-pressed={showAuto} aria-label={screeningBusy ? "Analyzing deterministic review cues" : `${showAuto ? "Hide" : "Show"} deterministic non-diagnostic review cues (${suggestions})`} title={screeningBusy ? "Analyzing deterministic signal features" : `${showAuto ? "Hide" : "Show"} deterministic review cues`} onClick={() => setShowAuto(!showAuto)}>
+            <Lightbulb aria-hidden="true" /> {screeningBusy ? "Analyzing…" : "Review cues"} <Count>{suggestions}</Count>
           </Button>
           <Button size="sm" variant={showDsa ? "default" : "ghost"} className={toolClass} aria-pressed={showDsa} title={showDsa ? "Hide DSA" : "Show DSA"} onClick={() => setShowDsa(!showDsa)}>
             <Activity aria-hidden="true" /> DSA

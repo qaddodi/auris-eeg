@@ -45,13 +45,13 @@ const GUTTER_EXPANDED = 88;
 const GUTTER_COLLAPSED = 32;
 const RULER = 18;
 // Keep the full-record navigator deliberately compact: it is a locator, not a
-// second EEG page.  Individual traces are clipped to their own lanes below.
-const OVERVIEW_H = 84;
-const DSA_H = 128;
-const DSA_LEFT = 34;
-const DSA_RIGHT = 82;
-const DSA_TOP = 14;
-const DSA_BOTTOM = 17;
+// second EEG page. Related derivations are condensed into montage-group lanes.
+const OVERVIEW_H = 76;
+const DSA_H = 108;
+const DSA_LEFT = 38;
+const DSA_RIGHT = 58;
+const DSA_TOP = 15;
+const DSA_BOTTOM = 15;
 const EVENT_LANE = 18;
 // Hidden channels retain their ordered slot, but only need enough room for
 // the compact gutter affordance. The remaining plot height is redistributed
@@ -114,8 +114,8 @@ const CANVAS_PALETTES: Record<ResolvedTheme, CanvasPalette> = {
     accent: "#7eb8c9",
     overlayFill: "rgba(232,234,237,0.06)",
     overlayStroke: "rgba(232,234,237,0.45)",
-    navigatorShade: "rgba(1,4,8,0.45)",
-    navigatorFill: "rgba(126,184,201,0.16)",
+    navigatorShade: "rgba(1,4,8,0.08)",
+    navigatorFill: "rgba(126,184,201,0.28)",
     navigatorHandle: "#a8d9e5",
     cursor: "rgba(232,234,237,0.95)",
   },
@@ -143,8 +143,8 @@ const CANVAS_PALETTES: Record<ResolvedTheme, CanvasPalette> = {
     accent: "#146b83",
     overlayFill: "rgba(23,35,44,0.08)",
     overlayStroke: "rgba(23,35,44,0.42)",
-    navigatorShade: "rgba(237,244,247,0.38)",
-    navigatorFill: "rgba(20,107,131,0.14)",
+    navigatorShade: "rgba(32,49,60,0.05)",
+    navigatorFill: "rgba(20,107,131,0.22)",
     navigatorHandle: "#075b71",
     cursor: "rgba(23,35,44,0.86)",
   },
@@ -1372,9 +1372,6 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
           ref={overviewOverlayRef}
           className="pointer-events-none absolute inset-0 size-full"
         />
-        <div className="pointer-events-none absolute left-2 top-1.5 text-[0.625rem] font-medium uppercase tracking-wider text-subtle">
-          Recording
-        </div>
       </div>
 
       <div
@@ -1394,9 +1391,6 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
         <canvas ref={dsaOverlayRef} className="pointer-events-none absolute inset-0 size-full" />
         <div className="pointer-events-none absolute left-2 top-1 text-[0.625rem] font-medium uppercase tracking-wider text-subtle">
           DSA · PSD (dB)
-        </div>
-        <div className="pointer-events-none absolute right-2 top-1 font-mono text-[0.5625rem] text-subtle">
-          stable scale · drag window
         </div>
       </div>
 
@@ -1847,103 +1841,104 @@ function drawOverviewWaves(
   ctx.fillRect(0, 0, cssW, cssH);
   if (list.length === 0 || total <= 0) return;
   const nPix = Math.max(1, Math.ceil(cssW * dpr));
-  const n = Math.max(1, list.length);
-  const overviewPlotH = Math.max(1, cssH - 8);
-  const lanes = laneLayout(list, overviewPlotH, s.hiddenTrackIds);
-  const laneH = lanes[0]?.height ?? overviewPlotH / n;
+  const overviewPlotH = Math.max(1, cssH - 9);
+  const hidden = new Set(s.hiddenTrackIds);
+  const grouped = new Map<string, ProcessedTrack[]>();
+  list.forEach((track, index) => {
+    if (hidden.has(track.id)) return;
+    const key = laneGroup(track, index, list);
+    const tracks = grouped.get(key) ?? [];
+    tracks.push(track);
+    grouped.set(key, tracks);
+  });
+  const groups = [...grouped.values()];
+  if (groups.length === 0) return;
+  const rowHeight = overviewPlotH / groups.length;
   const sign = s.negativeUp ? -1 : 1;
-  list.forEach((tr, i) => {
-    const lane = lanes[i] ?? { top: i * laneH, height: laneH };
-    const y0 = 4 + lane.top;
-    const rowHeight = lane.height;
+  groups.forEach((tracks, row) => {
+    const y0 = row * rowHeight;
     const mid = y0 + rowHeight / 2;
-    const laneInset = Math.min(1.5, Math.max(0.35, rowHeight * 0.16));
-    // Canvas joins can cross a lane boundary even when their endpoints are
-    // clamped.  A per-lane clip makes the compact overview read as distinct
-    // rows at every recording length.
+    const laneInset = Math.min(2, Math.max(0.75, rowHeight * 0.12));
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, y0, cssW, rowHeight);
     ctx.clip();
-    ctx.strokeStyle = palette.laneMid;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, mid + 0.5);
-    ctx.lineTo(cssW, mid + 0.5);
-    ctx.stroke();
-    if (s.hiddenTrackIds.includes(tr.id)) {
-      // Keep the hidden channel in order while collapsing its overview row to
-      // the same compact height used by the editor.
-      ctx.fillStyle = palette.hiddenFill;
-      ctx.fillRect(0, y0 + 1, cssW, Math.max(1, rowHeight - 2));
-      ctx.strokeStyle = palette.hiddenLine;
-      ctx.setLineDash([2, 3]);
-      ctx.beginPath();
-      ctx.moveTo(4, mid);
-      ctx.lineTo(cssW - 4, mid);
-      ctx.stroke();
-      ctx.setLineDash([]);
+    if (row % 2 === 1) {
+      ctx.fillStyle = palette.overviewTrace;
+      ctx.globalAlpha = 0.035;
+      ctx.fillRect(0, y0, cssW, rowHeight);
+    }
+    const composite = new Float32Array(nPix);
+    const activity = new Float32Array(nPix);
+    let contributors = 0;
+    for (const track of tracks) {
+      const raw = envelopeTraceWindow(track.samples, track.sampleRate, 0, total, nPix);
+      const profile = track.kind === "ekg" ? cachedEkgDisplayProfile(track.samples) : null;
+      const display = profile
+        ? mapTraceWindow(raw, (value) =>
+            Math.max(-profile.clipUv, Math.min(profile.clipUv, value - profile.baselineUv)),
+          )
+        : raw;
+      if (display.mode !== "envelope") continue;
+      const sampleMagnitudes: number[] = [];
+      const ranges: number[] = [];
+      const stride = Math.max(1, Math.floor(display.last.length / 1024));
+      for (let p = 0; p < display.last.length; p += stride) {
+        sampleMagnitudes.push(Math.abs(display.last[p]!));
+        ranges.push(Math.abs(display.max[p]! - display.min[p]!));
+      }
+      sampleMagnitudes.sort((a, b) => a - b);
+      ranges.sort((a, b) => a - b);
+      const sampleP90 = sampleMagnitudes[Math.floor(Math.max(0, sampleMagnitudes.length - 1) * 0.9)] ?? 1;
+      const rangeP90 = ranges[Math.floor(Math.max(0, ranges.length - 1) * 0.9)] ?? 1;
+      for (let p = 0; p < display.last.length; p++) {
+        composite[p] += clamp(display.last[p]! / Math.max(1e-6, sampleP90), -1.5, 1.5);
+        activity[p] += clamp(Math.abs(display.max[p]! - display.min[p]!) / Math.max(1e-6, rangeP90), 0, 1.5);
+      }
+      contributors += 1;
+    }
+    if (contributors === 0) {
       ctx.restore();
       return;
     }
-    const raw = envelopeTraceWindow(tr.samples, tr.sampleRate, 0, total, nPix);
-    const profile = tr.kind === "ekg" ? cachedEkgDisplayProfile(tr.samples) : null;
-    const display = profile
-      ? mapTraceWindow(raw, (value) =>
-          Math.max(-profile.clipUv, Math.min(profile.clipUv, value - profile.baselineUv)),
-        )
-      : raw;
-    // The overview is a compact locator, so its gain is derived from the
-    // record-wide envelope rather than the editor's clinical sensitivity.
-    // This preserves visible activity while reserving headroom in every lane.
-    const magnitudes: number[] = [];
-    const amplitudeStride = Math.max(1, Math.floor(display.min.length / 1024));
-    for (let p = 0; p < display.min.length; p += amplitudeStride) {
-      magnitudes.push(Math.abs(display.min[p]!), Math.abs(display.max[p]!));
-    }
-    magnitudes.sort((a, b) => a - b);
-    const robustAmplitude = magnitudes[Math.floor(Math.max(0, magnitudes.length - 1) * 0.9)] ?? 1;
-    const scale = (rowHeight * 0.24) / Math.max(1e-6, robustAmplitude);
     const color = palette.overviewTrace;
-    if (display.mode !== "envelope") {
-      ctx.restore();
-      return;
-    }
-    // The overview is a navigation aid, not a full-resolution trace. Drawing
-    // a min/max bar at every pixel turns dense recordings into a solid block
-    // of color, so use a light connected envelope and only a sparse set of
-    // whiskers for brief transients.
-    ctx.globalAlpha = 0.84;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 0.9;
-    ctx.lineJoin = "round";
-    ctx.lineCap = "butt";
+    ctx.globalAlpha = 0.14;
+    ctx.fillStyle = color;
     ctx.beginPath();
-    for (let p = 0; p < display.min.length; p++) {
-      const x = ((p + 0.5) / display.min.length) * cssW;
-      const y = clamp(mid + sign * display.min[p]! * scale, y0 + laneInset, y0 + rowHeight - laneInset);
+    for (let p = 0; p < activity.length; p++) {
+      const x = ((p + 0.5) / activity.length) * cssW;
+      const halfRange = Math.min(rowHeight * 0.38, (activity[p]! / contributors) * rowHeight * 0.28);
+      const y = clamp(mid - halfRange, y0 + laneInset, y0 + rowHeight - laneInset);
       if (p === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
-    ctx.stroke();
-    ctx.beginPath();
-    for (let p = 0; p < display.max.length; p++) {
-      const x = ((p + 0.5) / display.max.length) * cssW;
-      const y = clamp(mid + sign * display.max[p]! * scale, y0 + laneInset, y0 + rowHeight - laneInset);
-      if (p === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+    for (let p = activity.length - 1; p >= 0; p--) {
+      const x = ((p + 0.5) / activity.length) * cssW;
+      const halfRange = Math.min(rowHeight * 0.38, (activity[p]! / contributors) * rowHeight * 0.28);
+      ctx.lineTo(x, clamp(mid + halfRange, y0 + laneInset, y0 + rowHeight - laneInset));
     }
-    ctx.stroke();
+    ctx.closePath();
+    ctx.fill();
 
-    ctx.globalAlpha = 0.22;
-    ctx.lineWidth = 0.7;
+    ctx.globalAlpha = 0.88;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 0.85;
+    ctx.lineJoin = "round";
     ctx.beginPath();
-    const whiskerStride = Math.max(1, Math.ceil(display.min.length / Math.max(1, cssW / 4)));
-    for (let p = 0; p < display.min.length; p += whiskerStride) {
-      const x = ((p + 0.5) / display.min.length) * cssW;
-      ctx.moveTo(x, clamp(mid + sign * display.min[p]! * scale, y0 + laneInset, y0 + rowHeight - laneInset));
-      ctx.lineTo(x, clamp(mid + sign * display.max[p]! * scale, y0 + laneInset, y0 + rowHeight - laneInset));
+    for (let p = 0; p < composite.length; p++) {
+      const x = ((p + 0.5) / composite.length) * cssW;
+      const value = composite[p]! / contributors;
+      const y = clamp(mid + sign * value * rowHeight * 0.30, y0 + laneInset, y0 + rowHeight - laneInset);
+      if (p === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
     }
+    ctx.stroke();
+    ctx.globalAlpha = 0.18;
+    ctx.strokeStyle = palette.overviewTrace;
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(0, y0 + rowHeight - 0.5);
+    ctx.lineTo(cssW, y0 + rowHeight - 0.5);
     ctx.stroke();
     ctx.globalAlpha = 1;
     ctx.restore();
@@ -1981,7 +1976,9 @@ function drawOverviewOverlay(
       if (a.source === "auto" && (a.type === "qrs" || !showAuto)) continue;
       const x = (a.start / total) * cssW;
       ctx.fillStyle = annotationColorForTheme(a.type, theme);
-      ctx.fillRect(x, 0, 2, cssH);
+      // Keep findings in a dedicated bottom rail; full-height event stripes
+      // obscure the compact overview waveform when a recording has many cues.
+      ctx.fillRect(x, cssH - 7, 2, 7);
     }
   }
   const x0 = clamp((viewStart / total) * cssW, 0, cssW);
@@ -2078,24 +2075,32 @@ function drawDsa(
     DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.25,
   );
   ctx.fillText("0 Hz", DSA_LEFT - 5, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.5);
+  ctx.fillText(
+    `${(frame.fMax / 2).toFixed(0)} Hz`,
+    DSA_LEFT - 5,
+    DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.75,
+  );
+  ctx.fillText(`${frame.fMax.toFixed(0)} Hz`, DSA_LEFT - 5, cssH - DSA_BOTTOM - 3);
   ctx.textAlign = "left";
-  const legendX = cssW - DSA_RIGHT + 10;
-  const legendY = DSA_TOP + 4;
-  const legendW = Math.max(16, DSA_RIGHT - 20);
-  const gradient = ctx.createLinearGradient(legendX, 0, legendX + legendW, 0);
+  const legendX = cssW - DSA_RIGHT + 9;
+  const legendY = DSA_TOP + 2;
+  const legendW = 8;
+  const legendH = Math.max(20, cssH - DSA_TOP - DSA_BOTTOM - 4);
+  const gradient = ctx.createLinearGradient(0, legendY + legendH, 0, legendY);
   for (let i = 0; i <= 10; i++) {
     const [r, g, b] = dsaRgb(i / 10, theme);
     gradient.addColorStop(i / 10, `rgb(${r} ${g} ${b})`);
   }
   ctx.fillStyle = gradient;
-  ctx.fillRect(legendX, legendY, legendW, 7);
+  ctx.fillRect(legendX, legendY, legendW, legendH);
+  ctx.strokeStyle = palette.gridStrong;
+  ctx.strokeRect(legendX - 0.5, legendY - 0.5, legendW + 1, legendH + 1);
   ctx.fillStyle = palette.text;
   ctx.textBaseline = "top";
-  ctx.fillText(`${Math.round(frame.dbMax)} dB`, legendX, legendY + 8);
-  ctx.textAlign = "right";
-  ctx.fillText(`${Math.round(frame.dbMin)} dB`, legendX + legendW, legendY + 8);
+  ctx.fillText(`${Math.round(frame.dbMax)}`, legendX + 12, legendY - 1);
+  ctx.textBaseline = "bottom";
+  ctx.fillText(`${Math.round(frame.dbMin)}`, legendX + 12, legendY + legendH + 1);
   ctx.textAlign = "left";
-  ctx.fillText("PSD", legendX, cssH - 10);
   ctx.textBaseline = "bottom";
   const timeStep = niceStep(frame.duration);
   for (let time = 0; time <= frame.duration + 1e-6; time += timeStep) {

@@ -16,7 +16,10 @@ import {
   derivationsFor,
   processSegment,
 } from "@/lib/eeg/pipeline";
-import { detectMorphologies } from "@/lib/eeg/patterns";
+import { canonicalElectrode } from "@/lib/eeg/channels";
+import {
+  type ScreeningChannel,
+} from "@/lib/eeg/abnormality/screening";
 import {
   annotationToExport,
   annotationHistoryRedo,
@@ -128,6 +131,7 @@ export interface AppState {
   selectedAnnotation: string | null;
   hiddenTrackIds: string[];
   showAuto: boolean;
+  screeningBusy: boolean;
   showAnnotations: boolean;
   tool: "pan" | "annotate" | "caliper";
   pendingType: MorphologyType;
@@ -269,6 +273,47 @@ function cachedWholeRecording(
   return value;
 }
 
+function deterministicChannelsFor(
+  segment: SegmentData,
+  derivations: readonly Derivation[],
+  recording: LoadedRecording,
+): ScreeningChannel[] {
+  const derivationById = new Map(derivations.map((derivation) => [derivation.id, derivation]));
+  return segment.tracks.map((track) => {
+    const derivation = derivationById.get(track.id);
+    const sources = (derivation?.sources ?? [])
+      .map((index) => canonicalElectrode(recording.header.signals[index]?.label ?? ""))
+      .filter(Boolean);
+    return {
+      ...track,
+      isEeg: track.kind === "eeg",
+      canonical: sources.length === 1 ? sources[0] : undefined,
+      sources,
+      derivation,
+      unit: "uV",
+    };
+  });
+}
+
+function screenInWorker(channels: ScreeningChannel[], durationSeconds: number): Promise<Annotation[]> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(
+      new URL("../workers/deterministic-screening.worker.ts", import.meta.url),
+      { type: "module" },
+    );
+    worker.onmessage = (event: MessageEvent<{ annotations?: Annotation[]; error?: string }>) => {
+      worker.terminate();
+      if (event.data.error) reject(new Error(event.data.error));
+      else resolve(event.data.annotations ?? []);
+    };
+    worker.onerror = (event) => {
+      worker.terminate();
+      reject(new Error(event.message || "Deterministic screening worker failed"));
+    };
+    worker.postMessage({ channels, durationSeconds });
+  });
+}
+
 export function eegNow(state?: Pick<AppState, "segment" | "playheadEeg">): number {
   const s = state ?? useEegStore.getState();
   if (!s.segment) return 0;
@@ -277,6 +322,26 @@ export function eegNow(state?: Pick<AppState, "segment" | "playheadEeg">): numbe
 }
 
 export const useEegStore = create<AppState>((set, get) => {
+  let screeningRequest = 0;
+  const refreshDeterministicAnnotations = (
+    segment: SegmentData,
+    derivations: readonly Derivation[],
+    recording: LoadedRecording,
+  ) => {
+    const request = ++screeningRequest;
+    set({ screeningBusy: true });
+    void screenInWorker(
+      deterministicChannelsFor(segment, derivations, recording),
+      segment.duration,
+    ).then((auto) => {
+      if (request !== screeningRequest || !get().showAuto) return;
+      const existing = get().annotations.filter((annotation) => annotation.source !== "auto");
+      set({ annotations: [...existing, ...auto], screeningBusy: false });
+    }).catch(() => {
+      if (request === screeningRequest) set({ screeningBusy: false });
+    });
+  };
+
   const commitNavigation = (action: NavigationAction) => {
     const s = get();
     const total = s.segment?.duration ?? s.recording?.header.duration ?? 0;
@@ -458,9 +523,7 @@ export const useEegStore = create<AppState>((set, get) => {
     );
     // EKG remains available as a trace and manual annotation target, but its
     // heartbeat morphology is intentionally not surfaced as an auto suggestion.
-    const auto = get().showAuto
-      ? detectMorphologies(analysis.tracks).filter((a) => a.type !== "qrs")
-      : [];
+    const auto: Annotation[] = [];
     const fromFile: Annotation[] = recording.annotations.map((a, i) => ({
       id: `edf-${i}`,
       start: a.onset,
@@ -491,6 +554,7 @@ export const useEegStore = create<AppState>((set, get) => {
       annotations: [...keepUser, ...fromFile, ...auto],
       dsa: buildDsa(analysis.tracks, analysis.duration),
     });
+    if (get().showAuto) refreshDeterministicAnnotations(raw, derivations, recording);
     pushEngine();
     playback.seek(position);
     const nav = commitNavigation({ type: "seek", positionSec: position, intent: "programmatic" });
@@ -543,6 +607,7 @@ export const useEegStore = create<AppState>((set, get) => {
     selectedAnnotation: null,
     hiddenTrackIds: [],
     showAuto: false,
+    screeningBusy: false,
     showAnnotations: true,
     tool: "pan",
     pendingType: "comment",
@@ -1097,9 +1162,13 @@ export const useEegStore = create<AppState>((set, get) => {
     },
 
     setShowAuto: (v) => {
+      screeningRequest += 1;
       const existing = get().annotations.filter((a) => a.source !== "auto");
-      const auto = v && get().analysisSegment ? detectMorphologies(get().analysisSegment!.tracks).filter((a) => a.type !== "qrs") : [];
-      set({ showAuto: v, annotations: [...existing, ...auto] });
+      const state = get();
+      set({ showAuto: v, screeningBusy: false, annotations: existing });
+      if (v && state.rawSegment && state.recording) {
+        refreshDeterministicAnnotations(state.rawSegment, state.derivations, state.recording);
+      }
     },
     setShowAnnotations: (v) => set({ showAnnotations: v }),
     setTool: (t) => set({ tool: t }),

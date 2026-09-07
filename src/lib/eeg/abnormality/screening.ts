@@ -1,7 +1,9 @@
 import type {
+  Annotation,
   ChannelKind,
   Derivation,
   Laterality,
+  MorphologyType,
   ProcessedTrack,
 } from "../types.ts";
 import { detectTemporalPhenomena, type TemporalPhenomenonDetector } from "./phenomena.ts";
@@ -993,6 +995,83 @@ export async function runDeterministicScreening(input: ScreeningInput, options: 
 
 export const screenDeterministic = runDeterministicScreening;
 export const screenDeterministicSync = runDeterministicScreeningSync;
+
+const ANNOTATION_TYPE_BY_DETECTOR: Record<ScreeningDetector, MorphologyType> = {
+  "sharp-transient-candidate": "sharp",
+  "rhythmic-activity": "comment",
+  "periodic-activity": "periodic",
+  "focal-slowing": "slow",
+  "generalized-slowing": "slow",
+  "hemispheric-asymmetry": "comment",
+  "suppression-attenuation": "slow",
+  "burst-suppression": "burst-suppression",
+  "fast-activity": "muscle",
+  "sleep-spindle": "spindle",
+  "k-complex-candidate": "slow",
+  "flat-disconnected-electrode": "comment",
+  "movement-artifact": "comment",
+  "eye-movement-contamination": "blink",
+  "muscle-contamination": "muscle",
+  "line-noise": "comment",
+  "clipping-saturation": "comment",
+};
+
+/**
+ * UI adapter for the existing review-marker surface. Event detectors retain
+ * their measured interval. Record-level screens become short rail markers at
+ * time zero so they are visible in the event list without painting a
+ * whole-record annotation across every waveform lane.
+ */
+export function detectDeterministicAnnotations(
+  channels: readonly ScreeningInputChannel[],
+  durationSeconds: number,
+): Annotation[] {
+  const duration = Math.max(0, durationSeconds);
+  const context = clamp(duration || 30, 2, 300);
+  const result = runDeterministicScreeningSync(
+    { channels, durationSeconds: duration },
+    { contextWindowSeconds: context, maxContextWindowSeconds: context },
+  );
+  const detectorCounts = new Map<ScreeningDetector, number>();
+  const bucketCounts = new Map<string, number>();
+  const selected = [...result.findings]
+    .sort((a, b) => b.confidence - a.confidence || (a.eventInterval?.start ?? 0) - (b.eventInterval?.start ?? 0))
+    .filter((finding) => {
+      const detectorCount = detectorCounts.get(finding.detector) ?? 0;
+      const detectorLimit = finding.eventInterval ? 40 : 3;
+      if (detectorCount >= detectorLimit) return false;
+      if (finding.eventInterval) {
+        const bucket = Math.floor(finding.eventInterval.start / 30);
+        const key = `${finding.detector}:${bucket}`;
+        const bucketCount = bucketCounts.get(key) ?? 0;
+        if (bucketCount >= 1) return false;
+        bucketCounts.set(key, bucketCount + 1);
+      }
+      detectorCounts.set(finding.detector, detectorCount + 1);
+      return true;
+    })
+    .slice(0, 120);
+  return selected.map((finding) => {
+    const exact = finding.eventInterval;
+    const start = clamp(exact?.start ?? 0, 0, duration);
+    const end = exact
+      ? clamp(Math.max(exact.end, start), start, duration)
+      : Math.min(duration, start + 0.2);
+    const ids = finding.channelIds.filter((id) => channels.some((channel) => channel.id === id));
+    const recordLevel = exact ? "" : "Record-level screen · ";
+    return {
+      id: `screen-${finding.id}`,
+      start,
+      end,
+      trackId: ids.length === 1 ? ids[0]! : null,
+      ...(ids.length > 1 ? { trackIds: ids } : {}),
+      type: ANNOTATION_TYPE_BY_DETECTOR[finding.detector],
+      text: `${finding.title} · ${recordLevel}${finding.summary}`,
+      source: "auto" as const,
+      confidence: finding.confidence,
+    };
+  }).sort((a, b) => a.start - b.start || b.confidence - a.confidence || a.id.localeCompare(b.id));
+}
 
 export function createDeterministicScreeningAdapter(): ScreeningAdapter {
   return {
