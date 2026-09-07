@@ -104,6 +104,11 @@ export function useEditorKeys(onToggleFocus?: () => void) {
         s.page(-1);
         return;
       }
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        s.nudgeSensitivity(e.key === "ArrowUp" ? -1 : 1);
+        return;
+      }
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         e.preventDefault();
         const dir = e.key === "ArrowRight" ? 1 : -1;

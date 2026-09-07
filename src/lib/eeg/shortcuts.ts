@@ -12,6 +12,7 @@ export const SHORTCUTS: Shortcut[] = [
   { group: "View", keys: ["-", "["], action: "Zoom out" },
   { group: "View", keys: ["0"], action: "Show entire recording" },
   { group: "View", keys: ["←", "→"], action: "Previous / next page" },
+  { group: "View", keys: ["↑", "↓"], action: "Bigger / smaller waves" },
   { group: "View", keys: ["PageUp"], action: "Previous page" },
   { group: "View", keys: ["PageDown"], action: "Next page" },
   { group: "View", keys: ["Shift", "← / →"], action: "Pan 5 s" },
