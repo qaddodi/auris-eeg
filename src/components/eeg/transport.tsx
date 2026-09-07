@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import {
-  Download, Expand, Eye, EyeOff, Info, Keyboard, MoreHorizontal, PanelLeft, Pause, Play,
-  Repeat, Scan, Square, Upload, Volume2, VolumeX, ZoomIn, ZoomOut,
+  Download, Expand, Eye, EyeOff, Info, Keyboard, Lock, MoreHorizontal, PanelLeft, Pause, Play,
+  Repeat, Scan, Square, Unlock, Upload, Volume2, VolumeX, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { VIEW_PRESETS } from "@/lib/eeg/view";
@@ -30,6 +30,8 @@ export function Transport({ onOpenFile, onTogglePanel, onToggleFocus, onToggleFu
   const setLoop = useEegStore((s) => s.setLoop);
   const download = useEegStore((s) => s.download);
   const zoomAt = useEegStore((s) => s.zoomAt);
+  const zoomLocked = useEegStore((s) => s.zoomLocked);
+  const setZoomLocked = useEegStore((s) => s.setZoomLocked);
   const setViewDuration = useEegStore((s) => s.setViewDuration);
   const setFollow = useEegStore((s) => s.setFollow);
   const setKeysOpen = useEegStore((s) => s.setKeysOpen);
@@ -79,6 +81,17 @@ export function Transport({ onOpenFile, onTogglePanel, onToggleFocus, onToggleFu
       </Button>
       <Button size="iconSm" variant="ghost" aria-label="Stop" onClick={stop}><Square /></Button>
       <Button size="iconSm" variant="ghost" aria-label="Zoom out" onClick={() => zoomAt(1.25)}><ZoomOut /></Button>
+      <Button
+        size="sm"
+        variant={zoomLocked ? "default" : "secondary"}
+        className="shrink-0 px-2"
+        aria-pressed={zoomLocked}
+        aria-label={zoomLocked ? "Unlock scroll zoom" : "Lock scroll zoom"}
+        title={zoomLocked ? "Scroll and trackpad gestures pan; zoom buttons remain available" : "Lock the time window so scrolling pans instead of zooming"}
+        onClick={() => setZoomLocked(!zoomLocked)}
+      >
+        {zoomLocked ? <Lock /> : <Unlock />}<span className="hidden sm:inline">{zoomLocked ? "Locked" : "Lock"}</span>
+      </Button>
       <select className={`${selectClass} w-[4.75rem]`} aria-label="Time window" value={selectedDuration}
         onChange={(event) => setViewDuration(event.currentTarget.value === "all" ? total : Number(event.currentTarget.value))}>
         {!isPreset && selectedDuration !== "all" && <option value={selectedDuration}>{viewDuration.toFixed(1)}s</option>}

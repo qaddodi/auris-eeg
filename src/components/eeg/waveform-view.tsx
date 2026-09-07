@@ -301,9 +301,8 @@ export function WaveformView() {
     const paint = () => {
       const s = useEegStore.getState();
       let editorSegment = s.displaySegment;
-      const hidden = new Set(s.hiddenTrackIds);
       const overviewList = orderedDisplayTracks(
-        (s.segment?.tracks ?? []).filter((t) => t.kind !== "extra" && !hidden.has(t.id)),
+        (s.segment?.tracks ?? []).filter((t) => t.kind !== "extra"),
       );
       const total = s.segment?.duration ?? 0;
       const t = eegNow(s);
@@ -330,7 +329,7 @@ export function WaveformView() {
       const editorList = editorReady
         ? orderedDisplayTracks(
             (editorSegment?.tracks ?? []).filter(
-              (t) => t.kind !== "extra" && !hidden.has(t.id),
+              (t) => t.kind !== "extra",
             ),
           )
         : [];
@@ -429,7 +428,7 @@ export function WaveformView() {
             width: ovW,
             height: ovH,
             dpr,
-            trackStateKey: "overview",
+            trackStateKey: `overview|hidden:${s.hiddenTrackIds.join(",")}`,
           });
           if (osig !== ovSig) {
             ovSig = osig;
@@ -526,7 +525,7 @@ export function WaveformView() {
     const t = timeAtFraction(frac, vs, s.viewDuration);
     const laneIds = orderedDisplayTracks(
       (latest.displaySegment?.tracks ?? latest.segment?.tracks ?? []).filter(
-        (track) => track.kind !== "extra" && !latest.hiddenTrackIds.includes(track.id),
+        (track) => track.kind !== "extra",
       ),
     ).map((track) => track.id);
     const laneH = Math.max(1, (rect.height - RULER) / Math.max(1, laneIds.length));
@@ -644,7 +643,7 @@ export function WaveformView() {
       const state = useEegStore.getState();
       const list = orderedDisplayTracks(
         (state.displaySegment?.tracks ?? state.segment?.tracks ?? []).filter(
-          (track) => track.kind !== "extra" && !state.hiddenTrackIds.includes(track.id),
+          (track) => track.kind !== "extra",
         ),
       );
       const contentX = rect ? e.clientX - rect.left + (wrapRef.current?.scrollLeft ?? 0) : 0;
@@ -798,16 +797,10 @@ export function WaveformView() {
     return () => wrap.removeEventListener("wheel", onWheel);
   }, [panView, zoomAt]);
 
-  const hiddenTrackIds = useEegStore((s) => s.hiddenTrackIds);
   const tool = useEegStore((s) => s.tool);
   const list = orderedDisplayTracks(
     (displaySegment?.tracks ?? segment?.tracks ?? []).filter(
-      (t) => t.kind !== "extra" && !hiddenTrackIds.includes(t.id),
-    ),
-  );
-  const hiddenList = orderedDisplayTracks(
-    (displaySegment?.tracks ?? segment?.tracks ?? []).filter(
-      (t) => t.kind !== "extra" && hiddenTrackIds.includes(t.id),
+      (t) => t.kind !== "extra",
     ),
   );
 
@@ -874,30 +867,6 @@ export function WaveformView() {
         >
           <canvas ref={editorRef} className="absolute inset-0 size-full" />
           <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
-          {hiddenList.length > 0 && (
-            <div
-              className="pointer-events-auto absolute inset-x-1 top-1 z-30 flex min-w-0 items-center gap-1 overflow-x-auto rounded-sm border border-border/80 bg-surface/95 px-1 py-0.5 shadow-lg backdrop-blur-sm"
-              aria-label="Hidden channels"
-            >
-              <span className="shrink-0 text-[0.5625rem] font-semibold uppercase tracking-wide text-subtle">
-                Hidden
-              </span>
-              {hiddenList.map((track) => (
-                <button
-                  key={track.id}
-                  type="button"
-                  title={`Show ${track.label}`}
-                  aria-label={`Show ${track.label}`}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={() => useEegStore.getState().toggleTrackVisibility(track.id)}
-                  className="flex h-5 max-w-[9rem] shrink-0 items-center gap-1 rounded-sm bg-surface-2 px-1.5 font-mono text-[0.625rem] text-muted hover:text-fg"
-                >
-                  <EyeOff className="size-3" aria-hidden="true" />
-                  <span className="truncate">{track.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
           {list.length > 0 && (
             <div className="pointer-events-none absolute bottom-0 left-0 z-10 w-[132px]" style={{ top: RULER }}>
               {list.map((tr, index) => (
@@ -1021,7 +990,27 @@ function drawEditor(
     ctx.lineTo(cssW, y0 + laneH);
     ctx.stroke();
 
-    if (s.hiddenTrackIds.includes(tr.id)) return;
+    if (s.hiddenTrackIds.includes(tr.id)) {
+      // A hidden channel keeps its lane so every remaining trace, annotation,
+      // and group boundary stays at the same vertical position. The gutter's
+      // eye button is the one-click restore affordance for this placeholder.
+      ctx.fillStyle = "rgba(232,234,237,0.025)";
+      ctx.fillRect(plotX, y0 + 1, plotW, Math.max(1, laneH - 2));
+      ctx.strokeStyle = "rgba(232,234,237,0.16)";
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(plotX + 8, mid);
+      ctx.lineTo(plotX + plotW - 8, mid);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (laneH >= 16) {
+        ctx.fillStyle = "#747d89";
+        ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
+        ctx.textBaseline = "middle";
+        ctx.fillText(`${tr.label} · hidden`, plotX + 12, mid - 1);
+      }
+      return;
+    }
 
     const st = s.tracks[tr.id];
     const live = audible.has(tr.id);
@@ -1271,7 +1260,23 @@ function drawOverviewWaves(
   const laneH = (cssH - 14) / n;
   const sign = s.negativeUp ? -1 : 1;
   list.forEach((tr, i) => {
-    const mid = 4 + i * laneH + laneH / 2;
+    const y0 = 4 + i * laneH;
+    const mid = y0 + laneH / 2;
+    if (s.hiddenTrackIds.includes(tr.id)) {
+      // Keep hidden channels in their original overview lane as well; hiding
+      // a trace must not make the miniature overview reorder the remaining
+      // channels vertically.
+      ctx.fillStyle = "rgba(232,234,237,0.04)";
+      ctx.fillRect(0, y0 + 1, cssW, Math.max(1, laneH - 2));
+      ctx.strokeStyle = "rgba(232,234,237,0.16)";
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(4, mid);
+      ctx.lineTo(cssW - 4, mid);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      return;
+    }
     const lat = s.tracks[tr.id]?.lateralityOverride ?? tr.laterality;
     const raw = envelopeTraceWindow(tr.samples, tr.sampleRate, 0, total, nPix);
     const profile = tr.kind === "ekg" ? cachedEkgDisplayProfile(tr.samples) : null;
@@ -1535,59 +1540,72 @@ function TrackGutter({
       >
         {hidden ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
       </button>
-      <button
-        type="button"
-        title="Solo — multiple tracks can be soloed. Double-click for exclusive."
-        onClick={() => toggleSolo(track.id)}
-        onDoubleClick={() => soloExclusive(track.id)}
-        className={cn(
-          "grid h-6 min-w-6 shrink-0 place-items-center rounded-sm text-[0.6875rem] font-bold",
-          solo ? "bg-ok text-bg" : "bg-surface-2 text-subtle hover:text-fg",
-        )}
-      >
-        S
-      </button>
-      <button
-        type="button"
-        title={muted ? "Unmute" : "Mute"}
-        onClick={() => toggleMute(track.id)}
-        className={cn(
-          "grid h-6 min-w-6 shrink-0 place-items-center rounded-sm text-[0.6875rem] font-bold",
-          muted ? "bg-danger text-bg" : "bg-surface-2 text-subtle hover:text-fg",
-        )}
-      >
-        M
-      </button>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-1">
-          <span className="truncate font-mono text-[0.625rem] leading-tight text-fg">
-            {track.label}
-          </span>
-          <span
+      {hidden ? (
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-1">
+            <span className="truncate font-mono text-[0.625rem] leading-tight text-muted">
+              {track.label}
+            </span>
+            <span className="shrink-0 text-[0.5625rem] uppercase tracking-wide text-subtle">Hidden</span>
+          </div>
+        </div>
+      ) : (
+        <>
+          <button
+            type="button"
+            title="Solo — multiple tracks can be soloed. Double-click for exclusive."
+            onClick={() => toggleSolo(track.id)}
+            onDoubleClick={() => soloExclusive(track.id)}
             className={cn(
-              "shrink-0 text-[0.625rem] uppercase",
-              lat === "left" && "text-hemi-l",
-              lat === "right" && "text-hemi-r",
-              lat === "midline" && "text-hemi-c",
-              lat === "unknown" && "text-subtle",
+              "grid h-6 min-w-6 shrink-0 place-items-center rounded-sm text-[0.6875rem] font-bold",
+              solo ? "bg-ok text-bg" : "bg-surface-2 text-subtle hover:text-fg",
             )}
           >
-            {lat === "left" ? "L" : lat === "right" ? "R" : lat === "midline" ? "C" : "—"}
-          </span>
-        </div>
-        {!compact && (
-          <input
-            type="range"
-            min={0}
-            max={2}
-            step={0.05}
-            value={typeof st?.gain === "number" ? st.gain : 1}
-            onChange={(e) => setGain(track.id, Number(e.target.value))}
-            className="h-1 w-full cursor-pointer accent-accent"
-            aria-label={`${track.label} gain`}
-          />
-        )}
-      </div>
+            S
+          </button>
+          <button
+            type="button"
+            title={muted ? "Unmute" : "Mute"}
+            onClick={() => toggleMute(track.id)}
+            className={cn(
+              "grid h-6 min-w-6 shrink-0 place-items-center rounded-sm text-[0.6875rem] font-bold",
+              muted ? "bg-danger text-bg" : "bg-surface-2 text-subtle hover:text-fg",
+            )}
+          >
+            M
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline justify-between gap-1">
+              <span className="truncate font-mono text-[0.625rem] leading-tight text-fg">
+                {track.label}
+              </span>
+              <span
+                className={cn(
+                  "shrink-0 text-[0.625rem] uppercase",
+                  lat === "left" && "text-hemi-l",
+                  lat === "right" && "text-hemi-r",
+                  lat === "midline" && "text-hemi-c",
+                  lat === "unknown" && "text-subtle",
+                )}
+              >
+                {lat === "left" ? "L" : lat === "right" ? "R" : lat === "midline" ? "C" : "—"}
+              </span>
+            </div>
+            {!compact && (
+              <input
+                type="range"
+                min={0}
+                max={2}
+                step={0.05}
+                value={typeof st?.gain === "number" ? st.gain : 1}
+                onChange={(e) => setGain(track.id, Number(e.target.value))}
+                className="h-1 w-full cursor-pointer accent-accent"
+                aria-label={`${track.label} gain`}
+              />
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
