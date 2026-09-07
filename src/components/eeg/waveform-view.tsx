@@ -14,7 +14,11 @@ import {
 import { ANNOTATION_TYPES, MORPH_COLOR } from "@/lib/eeg/defaults";
 import { displayScaleForChannel } from "@/lib/eeg/display";
 import { CSS_PX_PER_MM, nominalMmForVoltage } from "@/lib/eeg/display-geometry";
-import { hitTestAnnotations, layoutAnnotations } from "@/lib/eeg/annotation-layout";
+import {
+  hitTestAnnotations,
+  layoutAnnotations,
+  type AnnotationLane,
+} from "@/lib/eeg/annotation-layout";
 import {
   cachedEkgDisplayProfile,
   envelopeWhiskers,
