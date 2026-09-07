@@ -31,7 +31,13 @@ export const LATERALITY_COLORS: Record<Laterality, string> = {
 };
 
 function bananaChainForId(id: string): keyof typeof EEG_CHAIN_COLORS | null {
-  const pair = id.startsWith("banana:") ? id.slice("banana:".length).toUpperCase() : "";
+  const pair = id.startsWith("banana:")
+    ? id
+        .slice("banana:".length)
+        .toUpperCase()
+        .replace(/[–—]/g, "-")
+        .replace(/\s+/g, "")
+    : "";
   if (["FP1-F7", "F7-T3", "T3-T5", "T5-O1"].includes(pair)) return "left-temporal";
   if (["FP1-F3", "F3-C3", "C3-P3", "P3-O1"].includes(pair)) return "left-parasagittal";
   if (["FZ-CZ", "CZ-PZ"].includes(pair)) return "midline";

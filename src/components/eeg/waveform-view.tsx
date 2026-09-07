@@ -33,10 +33,10 @@ import {
 import { dsaRgb, dsaUnit, type DsaFrame } from "@/lib/eeg/spectrum";
 import { eegNow, useEegStore } from "@/store/eeg-store";
 
-// Leave enough room for the eye/solo/mute controls and a full derivation name.
-// This width is shared by canvas plotting, overlays, hit testing, and the
-// React gutter so labels and traces never drift apart.
-const GUTTER = 232;
+// The gutter is deliberately only a utility strip. Channel names are drawn at
+// the left edge of each waveform lane (see drawLaneLabel), where they remain
+// readable without competing with the eye/solo/mute controls.
+const GUTTER = 112;
 const RULER = 18;
 const OVERVIEW_H = 72;
 const DSA_H = 112;
@@ -111,12 +111,25 @@ const NATUS_CHAIN_BY_PAIR: Record<string, string> = {
 function laneGroup(track: ProcessedTrack, index: number, list: ProcessedTrack[]): string {
   if (track.kind === "ekg") return "ekg";
   if (track.kind !== "eeg") return `aux:${track.kind}`;
-  if (!track.id.startsWith("banana:")) return "eeg";
   // Use the derivation identity first so a sparse recording or a future
   // montage ordering change cannot make one longitudinal chain split colors.
-  const pair = track.id.slice("banana:".length).toUpperCase().replace(/–/g, "-");
+  const normalizePair = (value: string) =>
+    value
+      .replace(/^banana:/i, "")
+      .replace(/^EEG\s+/i, "")
+      .toUpperCase()
+      .replace(/[–—]/g, "-")
+      .replace(/\s+/g, "");
+  const pair = normalizePair(track.id);
   const explicit = NATUS_CHAIN_BY_PAIR[pair];
   if (explicit) return explicit;
+  // Some EDF/montage adapters preserve the derivation in the display label
+  // while giving the processed track a legacy id. Recognize that label before
+  // consulting the ordered fallback so known Natus pairs never hash/alternate.
+  const labelPair = normalizePair(track.label);
+  const labelExplicit = NATUS_CHAIN_BY_PAIR[labelPair];
+  if (labelExplicit) return labelExplicit;
+  if (!track.id.startsWith("banana:")) return "eeg";
   // Keep a safe ordered fallback for legacy/unknown banana identities.
   const bananaIndex = list.findIndex((candidate) => candidate.id === track.id);
   if (bananaIndex < 4) return "banana:left-temporal";
@@ -314,6 +327,47 @@ function drawLane(
   }
   ctx.stroke();
   ctx.globalAlpha = 1;
+}
+
+/**
+ * Draw the full derivation name at the fixed left edge of its lane. This is
+ * painted after the trace with an opaque patch, so the trace can never run
+ * through the text. Because x is derived from the plot edge rather than the
+ * visible time window, labels stay put while the EEG is panned.
+ */
+function drawLaneLabel(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  x: number,
+  mid: number,
+  laneHeight: number,
+  color: string,
+  hidden = false,
+) {
+  const fontSize = hidden ? Math.min(11, Math.max(9, laneHeight - 10)) : Math.min(16, Math.max(13, laneHeight - 18));
+  const font = `${hidden ? 600 : 750} ${fontSize}px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace`;
+  ctx.save();
+  ctx.font = font;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+  const text = hidden ? `${label} · hidden` : label;
+  const padX = hidden ? 5 : 7;
+  const padY = hidden ? 3 : 4;
+  const textWidth = ctx.measureText(text).width;
+  // Use the same dark plot background as the canvas rather than translucency;
+  // even high-amplitude traces are fully cleared behind the name.
+  ctx.fillStyle = "#07080a";
+  ctx.fillRect(x, mid - fontSize / 2 - padY, textWidth + padX * 2 + 3, fontSize + padY * 2);
+  if (!hidden) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x, mid - fontSize / 2 - padY, 3, fontSize + padY * 2);
+    ctx.fillStyle = "#f1f4f7";
+    ctx.fillText(text, x + padX + 2, mid);
+  } else {
+    ctx.fillStyle = "#aeb6c2";
+    ctx.fillText(text, x + padX, mid);
+  }
+  ctx.restore();
 }
 
 function formatTick(t: number, span: number): string {
@@ -1037,7 +1091,7 @@ export function WaveformView() {
           <canvas ref={editorRef} className="absolute inset-0 size-full" />
           <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
           {list.length > 0 && (
-            <div className="pointer-events-none absolute bottom-0 left-0 z-10 w-[232px]" style={{ top: RULER }}>
+            <div className="pointer-events-none absolute bottom-0 left-0 z-10 w-[112px]" style={{ top: RULER }}>
               {list.map((tr, index) => (
                 <TrackGutter
                   key={tr.id}
@@ -1178,12 +1232,7 @@ function drawEditor(
       ctx.lineTo(plotX + plotW - 8, mid);
       ctx.stroke();
       ctx.setLineDash([]);
-      if (laneHeight >= 16) {
-        ctx.fillStyle = "#747d89";
-        ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
-        ctx.textBaseline = "middle";
-        ctx.fillText(`${tr.label} · hidden`, plotX + 12, mid - 1);
-      }
+      if (laneHeight >= 16) drawLaneLabel(ctx, tr.label, plotX + 8, mid, laneHeight, "#747d89", true);
       return;
     }
 
@@ -1228,6 +1277,10 @@ function drawEditor(
       weight,
       tr.sampleRate,
     );
+    // The label is part of the lane, not part of the utility gutter. It is
+    // deliberately painted after the trace to provide a clean, stable name
+    // plate at the start of every waveform.
+    drawLaneLabel(ctx, tr.label, plotX + 8, mid, laneHeight, color);
   });
 
   if (list.length > 0 && laneH > 18) {
@@ -1235,7 +1288,8 @@ function drawEditor(
     const markerMm = nominalMmForVoltage(markerUvPeakToPeak, s.sensitivityUv);
     const markerPx = markerMm * CSS_PX_PER_MM;
     const half = markerPx / 2;
-    const x = plotX + 14;
+    // Keep the calibration marker out of the channel-name plates.
+    const x = plotX + plotW - 112;
     const mid = plotTop + Math.min(laneH / 2, half + 8);
     ctx.strokeStyle = "rgba(232,234,237,0.55)";
     ctx.lineWidth = 1;
@@ -1725,25 +1779,13 @@ function TrackGutter({
           >
             <EyeOff className="size-3" />
           </button>
-          <span
-            className="shrink-0 whitespace-nowrap font-mono text-[0.75rem] font-bold leading-none tracking-tight text-fg"
-            title={track.label}
-          >
-            {track.label}
-          </span>
-          <span className="shrink-0 text-[0.5625rem] uppercase tracking-wide text-subtle">Hidden</span>
+          <span className="shrink-0 text-[0.5625rem] font-semibold uppercase tracking-wide text-subtle">Hidden</span>
         </>
       ) : (
         <>
           <span
-            className="shrink-0 whitespace-nowrap font-mono text-[0.8125rem] font-bold leading-none tracking-tight text-fg"
-            title={track.label}
-          >
-            {track.label}
-          </span>
-          <span
             className={cn(
-              "shrink-0 text-[0.625rem] font-semibold uppercase",
+              "shrink-0 px-0.5 text-[0.5625rem] font-semibold uppercase",
               lat === "left" && "text-hemi-l",
               lat === "right" && "text-hemi-r",
               lat === "midline" && "text-hemi-c",
