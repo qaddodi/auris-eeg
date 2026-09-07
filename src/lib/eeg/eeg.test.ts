@@ -553,13 +553,27 @@ describe("display normalization and semantic colors", () => {
       stableTraceColor(identity.id, identity.kind, identity.laterality),
       stableTraceColor(identity.id, identity.kind, identity.laterality),
     );
-    assert.notEqual(
+    // All derivations in a Natus longitudinal chain intentionally share a
+    // semantic color, independent of their visible order.
+    assert.equal(
       stableTraceColor("banana:Fp1-F7", "eeg", "left"),
       stableTraceColor("banana:F7-T3", "eeg", "left"),
+    );
+    assert.notEqual(
+      stableTraceColor("banana:Fp1-F7", "eeg", "left"),
+      stableTraceColor("banana:Fp1-F3", "eeg", "left"),
+    );
+    assert.notEqual(
+      stableTraceColor("banana:Fp1-F7", "eeg", "left"),
+      stableTraceColor("banana:Fp2-F4", "eeg", "right"),
     );
     assert.equal(
       stableTraceColor("aux:ekg", "ekg", "midline"),
       stableTraceColor("aux:ekg", "ekg", "midline"),
+    );
+    assert.notEqual(
+      stableTraceColor("aux:ekg", "ekg", "midline"),
+      stableTraceColor("aux:eog", "eog", "midline"),
     );
   });
 });
