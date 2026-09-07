@@ -9,6 +9,7 @@ import {
   Expand,
   Eye,
   EyeOff,
+  Filter,
   Hand,
   Info,
   Keyboard,
@@ -186,15 +187,21 @@ export function Transport({
             <option value="original">Referential</option>
             <option value="custom">Custom</option>
           </select>
-          <select className={`${selectClass} w-[4.25rem]`} aria-label="Low-frequency filter" title="Low-frequency filter" value={filters.lff} onChange={(event) => setFilters({ lff: Number(event.currentTarget.value), bandpass: false })}>
-            {LFF_PRESETS.map((value) => <option key={value} value={value}>LFF {value === 0 ? "Off" : `${value} Hz`}</option>)}
-          </select>
-          <select className={`${selectClass} w-[4.25rem]`} aria-label="High-frequency filter" title="High-frequency filter" value={filters.hff} onChange={(event) => setFilters({ hff: Number(event.currentTarget.value), bandpass: false })}>
-            {HFF_PRESETS.map((value) => <option key={value} value={value}>HFF {value === 0 ? "Off" : `${value} Hz`}</option>)}
-          </select>
-          <select className={`${selectClass} w-[4.25rem]`} aria-label="Notch filter" title="Notch filter" value={filters.notch60 ? "on" : "off"} onChange={(event) => setFilters({ notch60: event.currentTarget.value === "on" })}>
-            <option value="off">Notch Off</option><option value="on">Notch 60 Hz</option>
-          </select>
+          <label className="flex h-8 shrink-0 items-center gap-1.5 rounded-sm border border-border bg-bg px-2 text-[0.625rem] font-semibold uppercase tracking-wide text-muted" title="Low-frequency filter">
+            <span>LFF</span>
+            <select className="h-7 w-[4.25rem] bg-transparent text-xs font-normal normal-case tracking-normal text-fg outline-none" aria-label="Low-frequency filter" value={filters.lff} onChange={(event) => setFilters({ lff: Number(event.currentTarget.value), bandpass: false })}>
+              {LFF_PRESETS.map((value) => <option key={value} value={value}>{value === 0 ? "Off" : `${value} Hz`}</option>)}
+            </select>
+          </label>
+          <label className="flex h-8 shrink-0 items-center gap-1.5 rounded-sm border border-border bg-bg px-2 text-[0.625rem] font-semibold uppercase tracking-wide text-muted" title="High-frequency filter">
+            <span>HFF</span>
+            <select className="h-7 w-[4.25rem] bg-transparent text-xs font-normal normal-case tracking-normal text-fg outline-none" aria-label="High-frequency filter" value={filters.hff} onChange={(event) => setFilters({ hff: Number(event.currentTarget.value), bandpass: false })}>
+              {HFF_PRESETS.map((value) => <option key={value} value={value}>{value === 0 ? "Off" : `${value} Hz`}</option>)}
+            </select>
+          </label>
+          <Button size="sm" variant={filters.notch60 ? "default" : "ghost"} className={toolClass} aria-label={filters.notch60 ? "Disable 60 Hz notch filter" : "Enable 60 Hz notch filter"} aria-pressed={filters.notch60} title={filters.notch60 ? "Disable 60 Hz notch filter" : "Enable 60 Hz notch filter"} onClick={() => setFilters({ notch60: !filters.notch60 })}>
+            <Filter aria-hidden="true" /> NOTCH 60Hz
+          </Button>
           <select className={`${selectClass} w-[5.5rem]`} aria-label="EEG sensitivity" title="EEG sensitivity" value={sensitivity} onChange={(event) => setSensitivity(Number(event.currentTarget.value))}>
             {SENSITIVITY_PRESETS.map((value) => <option key={value} value={value}>{value} µV/mm</option>)}
           </select>
