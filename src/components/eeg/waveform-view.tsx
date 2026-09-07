@@ -1513,6 +1513,27 @@ function drawEditor(
   ctx.lineTo(cssW, RULER - 0.5);
   ctx.stroke();
 
+  // Keep the trace grid on real one-second boundaries instead of coupling it
+  // to the sparser ruler-label cadence. At wide views, fade the grid as the
+  // seconds compress and remove it before the lines become visual noise.
+  const pixelsPerSecond = plotW / span;
+  const showSecondGrid = pixelsPerSecond >= 6;
+  if (showSecondGrid) {
+    const clarity = clamp((pixelsPerSecond - 6) / 26, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = 0.18 + clarity * 0.72;
+    ctx.strokeStyle = palette.gridStrong;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let second = Math.ceil(viewStart); second <= viewEnd + 1e-6; second += 1) {
+      const x = Math.round(plotX + ((second - viewStart) / span) * plotW) + 0.5;
+      ctx.moveTo(x, RULER);
+      ctx.lineTo(x, cssH);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
   const step = niceStep(span);
   const t0 = Math.ceil(viewStart / step) * step;
   ctx.font = "500 10px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
@@ -1520,11 +1541,6 @@ function drawEditor(
   ctx.textBaseline = "middle";
   for (let t = t0; t <= viewEnd + 1e-6; t += step) {
     const x = plotX + ((t - viewStart) / span) * plotW;
-    ctx.strokeStyle = palette.grid;
-    ctx.beginPath();
-    ctx.moveTo(x, RULER);
-    ctx.lineTo(x, cssH);
-    ctx.stroke();
     ctx.strokeStyle = palette.gridStrong;
     ctx.beginPath();
     ctx.moveTo(x, RULER - 5);
