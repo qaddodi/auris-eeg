@@ -770,11 +770,13 @@ export function WaveformView() {
     const onWheel = (e: WheelEvent) => {
       if (!useEegStore.getState().segment) return;
       e.preventDefault();
+      const s = useEegStore.getState();
       // Trackpads emit horizontal deltaX for a natural left/right browse. A
-      // shifted vertical wheel remains a convenient pan gesture for mice.
+      // shifted vertical wheel remains a convenient pan gesture for mice. A
+      // locked zoom also routes ordinary vertical wheel gestures here, so a
+      // scroll cannot accidentally change the selected time window.
       const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
-      if (horizontal || e.shiftKey) {
-        const s = useEegStore.getState();
+      if (horizontal || e.shiftKey || s.zoomLocked) {
         if (s.followPlayhead) s.setFollow(false);
         const span = s.viewDuration;
         const delta = horizontal ? e.deltaX : e.deltaY;
@@ -783,7 +785,6 @@ export function WaveformView() {
       }
       const rect = wrap.getBoundingClientRect();
       const x = e.clientX - rect.left + wrap.scrollLeft - GUTTER;
-      const s = useEegStore.getState();
       const follow = s.followPlayhead && playback.playing;
       const vs = follow
         ? followViewStart(eegNow(s), s.viewDuration, s.segment!.duration)
@@ -802,6 +803,11 @@ export function WaveformView() {
   const list = orderedDisplayTracks(
     (displaySegment?.tracks ?? segment?.tracks ?? []).filter(
       (t) => t.kind !== "extra" && !hiddenTrackIds.includes(t.id),
+    ),
+  );
+  const hiddenList = orderedDisplayTracks(
+    (displaySegment?.tracks ?? segment?.tracks ?? []).filter(
+      (t) => t.kind !== "extra" && hiddenTrackIds.includes(t.id),
     ),
   );
 
@@ -868,6 +874,30 @@ export function WaveformView() {
         >
           <canvas ref={editorRef} className="absolute inset-0 size-full" />
           <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
+          {hiddenList.length > 0 && (
+            <div
+              className="pointer-events-auto absolute inset-x-1 top-1 z-30 flex min-w-0 items-center gap-1 overflow-x-auto rounded-sm border border-border/80 bg-surface/95 px-1 py-0.5 shadow-lg backdrop-blur-sm"
+              aria-label="Hidden channels"
+            >
+              <span className="shrink-0 text-[0.5625rem] font-semibold uppercase tracking-wide text-subtle">
+                Hidden
+              </span>
+              {hiddenList.map((track) => (
+                <button
+                  key={track.id}
+                  type="button"
+                  title={`Show ${track.label}`}
+                  aria-label={`Show ${track.label}`}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={() => useEegStore.getState().toggleTrackVisibility(track.id)}
+                  className="flex h-5 max-w-[9rem] shrink-0 items-center gap-1 rounded-sm bg-surface-2 px-1.5 font-mono text-[0.625rem] text-muted hover:text-fg"
+                >
+                  <EyeOff className="size-3" aria-hidden="true" />
+                  <span className="truncate">{track.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {list.length > 0 && (
             <div className="pointer-events-none absolute bottom-0 left-0 z-10 w-[132px]" style={{ top: RULER }}>
               {list.map((tr, index) => (

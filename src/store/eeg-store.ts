@@ -117,6 +117,8 @@ export interface AppState {
   playbackStatus: PlaybackStatus;
   viewStart: number;
   viewDuration: number;
+  /** When enabled, wheel/trackpad gestures pan instead of changing the time window. */
+  zoomLocked: boolean;
   followPlayhead: boolean;
   manualNavigationOverride: boolean;
   hoverCursor: { timeSec: number; trackId: string | null } | null;
@@ -164,6 +166,7 @@ export interface AppState {
   setLoop: (v: boolean) => void;
   download: () => void;
   zoomAt: (factor: number, anchor?: number) => void;
+  setZoomLocked: (locked: boolean) => void;
   setViewDuration: (d: number) => void;
   setView: (start: number, duration: number, opts?: { follow?: boolean; manual?: boolean }) => void;
   panView: (deltaSec: number) => void;
@@ -528,6 +531,7 @@ export const useEegStore = create<AppState>((set, get) => {
     playbackStatus: "stopped",
     viewStart: 0,
     viewDuration: DEFAULT_VIEW_SEC,
+    zoomLocked: false,
     followPlayhead: true,
     manualNavigationOverride: false,
     hoverCursor: null,
@@ -805,6 +809,7 @@ export const useEegStore = create<AppState>((set, get) => {
     setAboutOpen: (v) => set({ aboutOpen: v }),
     setKeysOpen: (v) => set({ keysOpen: v }),
     setShowDsa: (v) => set({ showDsa: v }),
+    setZoomLocked: (locked) => set({ zoomLocked: locked }),
     setAudibleScrub: (v) =>
       set({ audibleScrub: v && ["experimental", "musical"].includes(get().soundMode) }),
     toggleTrackVisibility: (id) =>

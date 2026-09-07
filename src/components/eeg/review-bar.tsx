@@ -9,8 +9,10 @@ import {
   EyeOff,
   Hand,
   Lightbulb,
+  Lock,
   MousePointer2,
   Ruler,
+  Unlock,
 } from "lucide-react";
 import { HFF_PRESETS, LFF_PRESETS, PAGE_PRESETS, SENSITIVITY_PRESETS } from "@/lib/eeg/defaults";
 import type { MontageKind } from "@/lib/eeg/types";
@@ -31,6 +33,8 @@ export function ReviewBar() {
   const sensitivity = useEegStore((s) => s.sensitivityUv);
   const setSensitivity = useEegStore((s) => s.setSensitivity);
   const viewDuration = useEegStore((s) => s.viewDuration);
+  const zoomLocked = useEegStore((s) => s.zoomLocked);
+  const setZoomLocked = useEegStore((s) => s.setZoomLocked);
   const setViewDuration = useEegStore((s) => s.setViewDuration);
   const panView = useEegStore((s) => s.panView);
   const page = useEegStore((s) => s.page);
@@ -118,6 +122,26 @@ export function ReviewBar() {
           <ChevronRight />
         </button>
       </div>
+      <button
+        type="button"
+        onClick={() => setZoomLocked(!zoomLocked)}
+        className={cn(
+          toolClass,
+          zoomLocked
+            ? "bg-accent text-accent-fg"
+            : "bg-bg text-muted hover:bg-surface-2 hover:text-fg",
+        )}
+        aria-pressed={zoomLocked}
+        aria-label={zoomLocked ? "Unlock scroll zoom" : "Lock scroll zoom"}
+        title={
+          zoomLocked
+            ? "Scroll and trackpad gestures pan; zoom buttons remain available"
+            : "Lock the time window so scroll and trackpad gestures pan"
+        }
+      >
+        {zoomLocked ? <Lock /> : <Unlock />}
+        <span className="hidden lg:inline">{zoomLocked ? "Zoom locked" : "Lock zoom"}</span>
+      </button>
       <Field label="LFF">
         <select
           className={selectClass}
