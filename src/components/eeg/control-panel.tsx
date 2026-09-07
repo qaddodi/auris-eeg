@@ -19,6 +19,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { MixerStrip } from "./mixer-strip";
 import { EventList } from "./event-list";
+import { LeadMap } from "./lead-map";
 import { useEegStore, currentRepro } from "@/store/eeg-store";
 import type { MontageKind, SonifyMode } from "@/lib/eeg/types";
 
@@ -293,6 +294,7 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
                 Events
               </p>
               <EventList />
+              <LeadMap />
             </section>
           </>
         )}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
-import { ChevronLeft, ChevronRight, Download, Redo2, Trash2, Undo2, Upload } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Play, Redo2, Trash2, Undo2, Upload, XCircle } from "lucide-react";
 import { ANNOTATION_TYPES, MORPH_COLOR } from "@/lib/eeg/defaults";
 import {
   AnnotationImportError,
@@ -15,6 +15,7 @@ import type { Annotation, MorphologyType } from "@/lib/eeg/types";
 import { formatTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useEegStore } from "@/store/eeg-store";
+import type { UnifiedAbnormalityFinding } from "@/lib/eeg/abnormality/types";
 
 const DEFAULT_DURATION = 1;
 type EditorDraft = Pick<Annotation, "start" | "end" | "trackId" | "trackIds" | "type" | "text">;
@@ -191,6 +192,7 @@ export function EventList() {
         Suggested waveforms are educational markers, not a diagnosis. Add a marker at the cursor or
         press A and click the tracing.
       </p>
+      <MachineFindingPanel />
       <div className="flex flex-wrap gap-1" aria-label="Annotation tool">
         {ANNOTATION_TYPES.map((type) => (
           <button
@@ -614,4 +616,130 @@ export function EventList() {
       )}
     </section>
   );
+}
+
+function MachineFindingPanel() {
+  const findings = useEegStore((s) => s.machineFindings);
+  const status = useEegStore((s) => s.findingRunStatus);
+  const progress = useEegStore((s) => s.findingProgress);
+  const error = useEegStore((s) => s.findingError);
+  const models = useEegStore((s) => s.findingModels);
+  const enabled = useEegStore((s) => s.enabledFindingDetectorIds);
+  const filters = useEegStore((s) => s.findingFilters);
+  const showRejected = useEegStore((s) => s.showRejectedFindings);
+  const selectedId = useEegStore((s) => s.selectedFindingId);
+  const run = useEegStore((s) => s.runFindingAnalysis);
+  const cancel = useEegStore((s) => s.cancelFindingAnalysis);
+  const setFilters = useEegStore((s) => s.setFindingFilters);
+  const setShowRejected = useEegStore((s) => s.setShowRejectedFindings);
+  const select = useEegStore((s) => s.setSelectedFinding);
+  const toggleDetector = useEegStore((s) => s.toggleFindingDetector);
+  const accept = useEegStore((s) => s.acceptFinding);
+  const reject = useEegStore((s) => s.rejectFinding);
+  const convert = useEegStore((s) => s.convertFindingToAnnotation);
+  const recording = useEegStore((s) => s.recording);
+
+  const visible = findings
+    .filter((finding) => showRejected || finding.reviewStatus !== "dismissed")
+    .filter((finding) => {
+      if (filters.type !== "all" && finding.type !== filters.type) return false;
+      if (filters.detector !== "all" && finding.detector.name !== filters.detector) return false;
+      if (filters.laterality !== "all" && finding.laterality !== filters.laterality) return false;
+      if (filters.confidence !== "all") {
+        const threshold = filters.confidence === "high" ? 0.8 : filters.confidence === "medium" ? 0.5 : 0.25;
+        if (finding.confidence < threshold) return false;
+      }
+      if (filters.electrode !== "all") {
+        const electrodes = [...finding.electrodeProbabilities.map((item) => item.electrode), ...finding.candidateElectrodes.map((item) => item.electrode), ...finding.displayedDerivations.flatMap((item) => item.electrodes)];
+        if (!electrodes.includes(filters.electrode)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => a.interval.start - b.interval.start || b.confidence - a.confidence);
+  const types = [...new Set(findings.map((finding) => finding.type))];
+  const electrodes = [...new Set(findings.flatMap((finding) => [...finding.electrodeProbabilities.map((item) => item.electrode), ...finding.candidateElectrodes.map((item) => item.electrode)]))].sort();
+  const detectors = [...new Set(findings.map((finding) => finding.detector.name))];
+  const active = status === "loading" || status === "running";
+
+  return (
+    <section className="space-y-2 rounded-md border border-border bg-bg p-2" aria-label="Machine findings">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="text-xs font-medium text-fg">Machine findings</p>
+          <p className="text-[0.625rem] leading-4 text-subtle">Local suggestions kept separate from clinician annotations.</p>
+        </div>
+        {active ? (
+          <Button size="sm" variant="danger" type="button" onClick={cancel}>
+            <XCircle aria-hidden="true" /> Cancel
+          </Button>
+        ) : (
+          <Button size="sm" type="button" onClick={() => void run()} disabled={!recording || enabled.length === 0}>
+            <Play aria-hidden="true" /> Run local screen
+          </Button>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-1" aria-label="Enabled detectors">
+        {models.map((model) => (
+          <button
+            key={model.id}
+            type="button"
+            onClick={() => toggleDetector(model.id)}
+            className={`rounded-full border px-2 py-1 text-[0.625rem] ${enabled.includes(model.id) ? "border-accent bg-accent/15 text-fg" : "border-border text-subtle"}`}
+            aria-pressed={enabled.includes(model.id)}
+            title={`${model.classification} · ${model.version}`}
+          >
+            {model.displayName}
+          </button>
+        ))}
+      </div>
+      {progress && (active || status === "complete") && (
+        <div className="space-y-1" aria-live="polite">
+          <div className="flex justify-between text-[0.625rem] text-muted"><span>{progress.message ?? progress.phase}</span><span className="font-mono">{progress.total ? Math.round((progress.completed / progress.total) * 100) : 0}%</span></div>
+          <div className="h-1 overflow-hidden rounded-full bg-surface-2"><div className="h-full bg-accent transition-all" style={{ width: `${Math.min(100, Math.max(0, progress.total ? (progress.completed / progress.total) * 100 : 0))}%` }} /></div>
+        </div>
+      )}
+      {status === "model-not-installed" && <p className="rounded-sm border border-warn/40 bg-warn/10 p-2 text-[0.6875rem] leading-4 text-warn">{error ?? "Selected model is not installed."}</p>}
+      {status === "error" && error && <p className="text-[0.6875rem] leading-4 text-danger">{error}</p>}
+      <div className="grid grid-cols-2 gap-1">
+        <select aria-label="Finding type filter" value={filters.type} onChange={(event) => setFilters({ type: event.currentTarget.value })} className="h-7 rounded-sm border border-border bg-surface px-1 text-[0.625rem] text-fg">
+          <option value="all">All types</option>{types.map((type) => <option key={type} value={type}>{type}</option>)}
+        </select>
+        <select aria-label="Finding confidence filter" value={filters.confidence} onChange={(event) => setFilters({ confidence: event.currentTarget.value as typeof filters.confidence })} className="h-7 rounded-sm border border-border bg-surface px-1 text-[0.625rem] text-fg">
+          <option value="all">Any confidence</option><option value="high">High ≥80%</option><option value="medium">Medium ≥50%</option><option value="low">Low ≥25%</option>
+        </select>
+        <select aria-label="Finding electrode filter" value={filters.electrode} onChange={(event) => setFilters({ electrode: event.currentTarget.value })} className="h-7 rounded-sm border border-border bg-surface px-1 text-[0.625rem] text-fg">
+          <option value="all">All electrodes</option>{electrodes.map((electrode) => <option key={electrode} value={electrode}>{electrode}</option>)}
+        </select>
+        <select aria-label="Finding laterality filter" value={filters.laterality} onChange={(event) => setFilters({ laterality: event.currentTarget.value as typeof filters.laterality })} className="h-7 rounded-sm border border-border bg-surface px-1 text-[0.625rem] text-fg">
+          <option value="all">All sides</option><option value="left">Left</option><option value="right">Right</option><option value="midline">Midline</option><option value="unknown">Unknown</option>
+        </select>
+        <select aria-label="Finding detector filter" value={filters.detector} onChange={(event) => setFilters({ detector: event.currentTarget.value })} className="h-7 rounded-sm border border-border bg-surface px-1 text-[0.625rem] text-fg">
+          <option value="all">All detectors</option>{detectors.map((detector) => <option key={detector} value={detector}>{detector}</option>)}
+        </select>
+        <label className="flex h-7 items-center gap-1 rounded-sm border border-border px-1 text-[0.625rem] text-muted"><input type="checkbox" checked={showRejected} onChange={(event) => setShowRejected(event.currentTarget.checked)} /> Show rejected</label>
+      </div>
+      {visible.length === 0 ? <p className="rounded-sm border border-dashed border-border p-2 text-[0.6875rem] text-subtle">{findings.length ? "No findings match these filters." : "Run the local screen to create review suggestions."}</p> : (
+        <ul className="max-h-[30rem] space-y-1 overflow-auto" aria-label="Machine finding rows">
+          {visible.map((finding) => <MachineFindingRow key={finding.id} finding={finding} selected={finding.id === selectedId} onSelect={() => select(finding.id)} onAccept={() => accept(finding.id)} onReject={() => reject(finding.id)} onConvert={(text) => convert(finding.id, text)} />)}
+        </ul>
+      )}
+      <p className="text-[0.625rem] leading-4 text-subtle">Expert review only; not diagnostic. Findings and data remain local to this browser.</p>
+    </section>
+  );
+}
+
+function MachineFindingRow({ finding, selected, onSelect, onAccept, onReject, onConvert }: { finding: UnifiedAbnormalityFinding; selected: boolean; onSelect: () => void; onAccept: () => void; onReject: () => void; onConvert: (text?: string) => void }) {
+  const electrodes = [...new Set([...finding.electrodeProbabilities.map((item) => item.electrode), ...finding.candidateElectrodes.map((item) => item.electrode)])];
+  const derivations = finding.displayedDerivations.map((item) => item.label).join(", ") || "No mapped derivation";
+  const editAndConvert = () => {
+    const note = window.prompt("Edit the note for the clinician annotation:", finding.label);
+    if (note !== null) onConvert(note.trim() || finding.label);
+  };
+  return <li className={`rounded-md border border-border/70 p-2 ${selected ? "border-accent bg-surface-2" : "bg-surface"}`}>
+    <button type="button" onClick={onSelect} className="w-full text-left" aria-pressed={selected}>
+      <div className="flex items-start justify-between gap-2"><span className="font-medium text-xs text-fg">{finding.label || finding.type}</span><span className="font-mono text-[0.625rem] tabular-nums text-accent">{(finding.confidence * 100).toFixed(0)}%</span></div>
+      <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[0.625rem] leading-4"><span className="text-subtle">Interval</span><span className="font-mono text-right text-fg">{formatTime(finding.interval.start, true)}–{formatTime(finding.interval.end, true)}</span><span className="text-subtle">Electrodes</span><span className="truncate text-right text-fg" title={electrodes.join(", ")}>{electrodes.join(", ") || "—"}</span><span className="text-subtle">Derivations</span><span className="truncate text-right text-fg" title={derivations}>{derivations}</span><span className="text-subtle">Spatial</span><span className="truncate text-right text-fg" title={finding.spatialDistribution}>{finding.laterality} · {finding.spatialDistribution}</span><span className="text-subtle">Class distribution</span><span className="truncate text-right text-fg" title={finding.distribution.entries.map((entry) => `${entry.label} ${(entry.probability * 100).toFixed(0)}%`).join(", ")}>{finding.distribution.entries.map((entry) => `${entry.label} ${(entry.probability * 100).toFixed(0)}%`).join(", ") || "—"}</span><span className="text-subtle">Artifact</span><span className="text-right text-fg">{finding.artifactProbability == null ? "not estimated" : `${(finding.artifactProbability * 100).toFixed(0)}%`}</span><span className="text-subtle">Detector</span><span className="truncate text-right text-fg" title={`${finding.detector.name} ${finding.detector.version}`}>{finding.detector.name} · {finding.detector.version} · {finding.detector.classification}</span></div>
+    </button>
+    {selected && <div className="mt-1.5 space-y-1 border-t border-border/60 pt-1.5"><p className="text-[0.625rem] leading-4 text-muted"><span className="text-subtle">Limitations:</span> {finding.limitations.join(" ") || "Not stated by detector."}</p><div className="flex flex-wrap gap-1"><Button size="sm" type="button" onClick={onAccept}>Accept</Button><Button size="sm" variant="secondary" type="button" onClick={() => onConvert()}>Convert to annotation</Button><Button size="sm" variant="secondary" type="button" onClick={editAndConvert}>Edit &amp; convert</Button><Button size="sm" variant="danger" type="button" onClick={onReject}>Reject</Button></div></div>}
+  </li>;
 }

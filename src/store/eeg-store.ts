@@ -10,6 +10,7 @@ import {
   stepSensitivity,
 } from "@/lib/eeg/defaults";
 import { loadRecording } from "@/lib/eeg/edf";
+import { aliasKeys } from "@/lib/eeg/channels";
 import {
   audibleIds,
   controlTracksFrom,
@@ -64,6 +65,55 @@ import type {
   TrackState,
 } from "@/lib/eeg/types";
 import type { DsaFrame } from "@/lib/eeg/spectrum";
+import {
+  AbnormalityModelError,
+  AbnormalityWorkerClient,
+  DETERMINISTIC_SCREENING_METADATA,
+  LocalInferenceCache,
+  buildDetectorSignalInput,
+  detectorRegistry,
+  inferenceInputFromDetectorInput,
+  listDetectors,
+  runAbnormalityAnalysis,
+  type AbnormalityModelMetadata,
+  type ModelProgress,
+  type UnifiedAbnormalityFinding,
+} from "@/lib/eeg/abnormality";
+/* Machine findings deliberately use a domain separate from annotations. */
+
+export interface FindingFilters {
+  type: string;
+  confidence: "all" | "high" | "medium" | "low";
+  electrode: string;
+  laterality: "all" | "left" | "right" | "midline" | "unknown";
+  detector: string;
+}
+
+export type FindingRunStatus =
+  | "idle"
+  | "loading"
+  | "running"
+  | "complete"
+  | "cancelled"
+  | "error"
+  | "model-not-installed";
+
+const DEFAULT_FINDING_FILTERS: FindingFilters = {
+  type: "all",
+  confidence: "all",
+  electrode: "all",
+  laterality: "all",
+  detector: "all",
+};
+
+const DETERMINISTIC_DETECTOR = DETERMINISTIC_SCREENING_METADATA;
+
+function findingElectrodes(finding: UnifiedAbnormalityFinding): string[] {
+  const direct = finding.electrodeProbabilities.map((item) => item.electrode);
+  const candidates = finding.candidateElectrodes.map((item) => item.electrode);
+  const displayed = finding.displayedDerivations.flatMap((item) => item.electrodes);
+  return [...new Set([...direct, ...candidates, ...displayed])];
+}
 
 export type SoundMode = "off" | "evidence" | "hybrid" | "experimental" | "musical";
 
@@ -135,6 +185,18 @@ export interface AppState {
   dsa: DsaFrame | null;
   audibleScrub: boolean;
 
+  /** Machine output is deliberately separate from clinician/user annotations. */
+  machineFindings: UnifiedAbnormalityFinding[];
+  findingRunStatus: FindingRunStatus;
+  findingProgress: ModelProgress | null;
+  findingError: string | null;
+  findingModels: AbnormalityModelMetadata[];
+  enabledFindingDetectorIds: string[];
+  findingFilters: FindingFilters;
+  showRejectedFindings: boolean;
+  selectedFindingId: string | null;
+  findingRunId: number;
+
   loadFile: (file: File | ArrayBuffer, name: string) => Promise<void>;
   setMontage: (m: MontageKind) => void;
   setFilters: (p: Partial<FilterSettings>) => void;
@@ -186,6 +248,15 @@ export interface AppState {
   setShowDsa: (v: boolean) => void;
   setAudibleScrub: (v: boolean) => void;
   toggleTrackVisibility: (id: string) => void;
+  runFindingAnalysis: () => Promise<void>;
+  cancelFindingAnalysis: () => void;
+  setFindingFilters: (patch: Partial<FindingFilters>) => void;
+  setShowRejectedFindings: (show: boolean) => void;
+  setSelectedFinding: (id: string | null) => void;
+  toggleFindingDetector: (id: string) => void;
+  acceptFinding: (id: string) => void;
+  rejectFinding: (id: string) => void;
+  convertFindingToAnnotation: (id: string, text?: string) => void;
 }
 
 function defaultTrack(id: string, kind?: string): TrackState {
@@ -246,6 +317,46 @@ const RAW_FILTERS: FilterSettings = {
 
 const rawMontageCache = new WeakMap<ArrayBuffer, Map<string, SegmentData>>();
 const analysisMontageCache = new WeakMap<ArrayBuffer, Map<string, SegmentData>>();
+let findingAbortController: AbortController | null = null;
+let findingWorkerClient: AbnormalityWorkerClient | null = null;
+const findingInferenceCache = new LocalInferenceCache(32);
+const recordingIds = new WeakMap<ArrayBuffer, string>();
+let recordingIdSequence = 0;
+
+function recordingIdentity(recording: LoadedRecording): UnifiedAbnormalityFinding["recording"] {
+  let id = recordingIds.get(recording.buffer);
+  if (!id) {
+    recordingIdSequence += 1;
+    id = `local-recording-${recordingIdSequence}-${recording.buffer.byteLength}`;
+    recordingIds.set(recording.buffer, id);
+  }
+  return {
+    id,
+    sizeBytes: recording.buffer.byteLength,
+  };
+}
+
+function remapFindingDerivations(
+  finding: UnifiedAbnormalityFinding,
+  derivations: Derivation[],
+): UnifiedAbnormalityFinding {
+  const electrodes = new Set(
+    findingElectrodes(finding).flatMap((value) => aliasKeys(value)),
+  );
+  const mapped = derivations
+    .filter((derivation) => derivation.available)
+    .filter((derivation) => {
+      const labels = derivation.label.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+      return labels.some((label) => aliasKeys(label).some((key) => electrodes.has(key)));
+    })
+    .map((derivation) => ({
+      id: derivation.id,
+      label: derivation.label,
+      electrodes: derivation.label.split(/\s*[-–—/]\s*/).filter(Boolean),
+      laterality: derivation.laterality,
+    }));
+  return { ...finding, displayedDerivations: mapped };
+}
 
 function montageCacheKey(montage: MontageKind, pairs: [string, string][]): string {
   return `${montage}:${pairs.map(([a, b]) => `${a}-${b}`).join("|")}`;
@@ -549,8 +660,22 @@ export const useEegStore = create<AppState>((set, get) => {
     showDsa: true,
     dsa: null,
     audibleScrub: false,
+    machineFindings: [],
+    findingRunStatus: "idle",
+    findingProgress: null,
+    findingError: null,
+    findingModels: listDetectors(),
+    enabledFindingDetectorIds: [DETERMINISTIC_DETECTOR.id],
+    findingFilters: { ...DEFAULT_FINDING_FILTERS },
+    showRejectedFindings: false,
+    selectedFindingId: null,
+    findingRunId: 0,
 
     loadFile: async (file, name) => {
+      findingAbortController?.abort();
+      findingWorkerClient?.cancel();
+      findingAbortController = null;
+      const nextFindingRunId = get().findingRunId + 1;
       set({
         status: "loading",
         error: null,
@@ -572,6 +697,12 @@ export const useEegStore = create<AppState>((set, get) => {
         derivations: [],
         tracks: {},
         dsa: null,
+        machineFindings: [],
+        findingRunStatus: "idle",
+        findingProgress: null,
+        findingError: null,
+        selectedFindingId: null,
+        findingRunId: nextFindingRunId,
       });
       playback.stop();
       playback.setControlTracks([], 0);
@@ -619,7 +750,15 @@ export const useEegStore = create<AppState>((set, get) => {
       const { recording, customPairs, tracks } = get();
       if (!recording) return;
       const derivations = derivationsFor(recording, m, customPairs);
-      set({ montage: m, derivations, tracks: syncTracks(derivations, tracks), busy: true });
+      set({
+        montage: m,
+        derivations,
+        tracks: syncTracks(derivations, tracks),
+        machineFindings: get().machineFindings.map((finding) =>
+          remapFindingDerivations(finding, derivations),
+        ),
+        busy: true,
+      });
       rebuildSession();
     },
 
@@ -817,6 +956,137 @@ export const useEegStore = create<AppState>((set, get) => {
           ? state.hiddenTrackIds.filter((trackId) => trackId !== id)
           : [...state.hiddenTrackIds, id],
       })),
+
+    runFindingAnalysis: async () => {
+      const state = get();
+      if (!state.recording || !state.analysisSegment) {
+        set({ findingError: "Open a recording before running the local screen.", findingRunStatus: "error" });
+        return;
+      }
+      findingAbortController?.abort();
+      findingWorkerClient?.cancel();
+      const controller = new AbortController();
+      findingAbortController = controller;
+      const runId = state.findingRunId + 1;
+      const enabled = state.enabledFindingDetectorIds;
+      set({
+        findingRunId: runId,
+        findingRunStatus: "loading",
+        findingProgress: { completed: 0, total: 1, phase: "loading", message: "Preparing local analysis…" },
+        findingError: null,
+        selectedFindingId: null,
+      });
+      try {
+        const registered = listDetectors();
+        set({ findingModels: registered });
+        const latest = get();
+        if (latest.findingRunId !== runId || controller.signal.aborted) return;
+        set({ findingRunStatus: "running", findingProgress: { completed: 0, total: 1, phase: "preprocessing", message: "Preparing calibrated signals…" } });
+        const detectorInput = buildDetectorSignalInput(latest.recording);
+        if (!detectorInput.signals.length) {
+          throw new Error("No recoverable referential EEG electrodes are available for local screening. Bipolar-only channels cannot be reconstructed safely.");
+        }
+        const nonBuiltin = enabled.find((id) => id !== DETERMINISTIC_DETECTOR.id);
+        if (nonBuiltin && !detectorRegistry.has(nonBuiltin)) {
+          throw new AbnormalityModelError(
+            "model-not-installed",
+            `${nonBuiltin === "spikenet2" ? "SpikeNet2" : nonBuiltin === "sparcnet" ? "SPaRCNet" : nonBuiltin} is not installed. Import an authorized compatible model and manifest locally; no weights are bundled or downloaded.`,
+            { modelId: nonBuiltin },
+          );
+        }
+        const inferenceInput = inferenceInputFromDetectorInput(detectorInput);
+        const onProgress = (progress: ModelProgress) => {
+          if (get().findingRunId === runId && !controller.signal.aborted) set({ findingProgress: progress });
+        };
+        const result = enabled.length === 1 && enabled[0] === DETERMINISTIC_DETECTOR.id
+          ? await (() => {
+              findingWorkerClient ??= AbnormalityWorkerClient.createDefault();
+              return findingWorkerClient.run(
+                DETERMINISTIC_DETECTOR.id,
+                { recording: recordingIdentity(latest.recording), inputs: [inferenceInput] },
+                {
+                  signal: controller.signal,
+                  cache: findingInferenceCache,
+                  modelVersion: DETERMINISTIC_DETECTOR.version,
+                  preprocessingVersion: DETERMINISTIC_DETECTOR.preprocessingVersion,
+                  onProgress,
+                },
+              );
+            })()
+          : await runAbnormalityAnalysis({
+              recording: recordingIdentity(latest.recording),
+              input: inferenceInput,
+              enabledDetectorIds: enabled,
+              signal: controller.signal,
+              onProgress,
+            });
+        const findings = result.findings;
+        if (controller.signal.aborted || get().findingRunId !== runId) return;
+        const mapped = findings.map((finding) => remapFindingDerivations(finding, get().derivations));
+        set({
+          machineFindings: mapped,
+          findingProgress: { completed: 1, total: 1, phase: "complete", message: `${mapped.length} machine finding${mapped.length === 1 ? "" : "s"} ready for review.` },
+          findingRunStatus: "complete",
+          findingError: null,
+        });
+      } catch (error) {
+        if (controller.signal.aborted || get().findingRunId !== runId) return;
+        set({
+          findingRunStatus: error instanceof AbnormalityModelError && error.code === "model-not-installed" ? "model-not-installed" : "error",
+          findingProgress: null,
+          findingError: error instanceof Error ? error.message : "Local analysis could not be completed.",
+        });
+      } finally {
+        if (findingAbortController === controller) findingAbortController = null;
+      }
+    },
+
+    cancelFindingAnalysis: () => {
+      findingAbortController?.abort();
+      findingWorkerClient?.cancel();
+      findingAbortController = null;
+      const status = get().findingRunStatus;
+      if (status === "loading" || status === "running") set({ findingRunStatus: "cancelled", findingProgress: null, findingError: null });
+    },
+
+    setFindingFilters: (patch) => set({ findingFilters: { ...get().findingFilters, ...patch } }),
+    setShowRejectedFindings: (show) => set({ showRejectedFindings: show }),
+    setSelectedFinding: (id) => {
+      const finding = get().machineFindings.find((item) => item.id === id);
+      if (!finding) {
+        set({ selectedFindingId: null });
+        return;
+      }
+      set({ selectedFindingId: id, focusedTrackIds: finding.displayedDerivations.map((item) => item.id) });
+      get().setView(finding.interval.start, Math.max(1, finding.interval.end - finding.interval.start), { manual: true });
+      get().seekEeg(finding.interval.start, "programmatic");
+    },
+    toggleFindingDetector: (id) => {
+      const enabled = get().enabledFindingDetectorIds;
+      const next = enabled.includes(id) ? enabled.filter((item) => item !== id) : [...enabled, id];
+      set({ enabledFindingDetectorIds: next.length ? next : [DETERMINISTIC_DETECTOR.id] });
+    },
+    acceptFinding: (id) => {
+      set({ machineFindings: get().machineFindings.map((finding) => finding.id === id ? { ...finding, reviewStatus: "confirmed" } : finding) });
+    },
+    rejectFinding: (id) => {
+      set({ machineFindings: get().machineFindings.map((finding) => finding.id === id ? { ...finding, reviewStatus: "dismissed" } : finding), selectedFindingId: get().selectedFindingId === id ? null : get().selectedFindingId });
+    },
+    convertFindingToAnnotation: (id, text) => {
+      const finding = get().machineFindings.find((item) => item.id === id);
+      if (!finding) return;
+      get().addAnnotation({
+        start: finding.interval.start,
+        end: finding.interval.end,
+        trackId: finding.displayedDerivations[0]?.id ?? null,
+        trackIds: finding.displayedDerivations.map((item) => item.id),
+        type: finding.type === "sharp-wave" ? "sharp" : finding.type === "periodic-discharge" ? "periodic" : "comment",
+        text: text ?? `Converted from ${finding.detector.name} ${finding.detector.version}: ${finding.label}`,
+        source: "user",
+        confidence: finding.confidence,
+      });
+      set({ machineFindings: get().machineFindings.map((item) => item.id === id ? { ...item, reviewStatus: "confirmed" } : item) });
+    },
 
     seekEeg: (t, intent = "user") => {
       const { segment } = get();
