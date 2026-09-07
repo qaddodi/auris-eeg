@@ -129,7 +129,7 @@ export interface AppState {
   hiddenTrackIds: string[];
   showAuto: boolean;
   showAnnotations: boolean;
-  tool: "pointer" | "pan" | "annotate" | "caliper";
+  tool: "pan" | "annotate" | "caliper";
   pendingType: MorphologyType;
   showDsa: boolean;
   dsa: DsaFrame | null;
@@ -541,7 +541,7 @@ export const useEegStore = create<AppState>((set, get) => {
     hiddenTrackIds: [],
     showAuto: false,
     showAnnotations: true,
-    tool: "pointer",
+    tool: "pan",
     pendingType: "comment",
     showDsa: true,
     dsa: null,
@@ -1000,7 +1000,7 @@ export const useEegStore = create<AppState>((set, get) => {
     addAnnotation: (a) => {
       const item = validateAnnotations([{ ...a, id: nid(), source: "user" }], { duration: get().segment?.duration ?? 0 })[0]!;
       set({ annotationPast: [...get().annotationPast.slice(-49), get().annotations], annotationFuture: [],
-        annotations: [...get().annotations, item], selectedAnnotation: item.id, tool: "pointer" });
+        annotations: [...get().annotations, item], selectedAnnotation: item.id, tool: "pan" });
       get().selectAnnotation(item.id);
     },
     updateAnnotation: (id, patch) => {

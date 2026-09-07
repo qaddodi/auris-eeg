@@ -863,13 +863,13 @@ export function WaveformView() {
         eventRailHeight: EVENT_LANE,
       },
     );
-    if (annotationId && latest.tool === "pointer") {
+    if (annotationId && latest.tool === "pan") {
       latest.selectAnnotation(annotationId);
       return;
     }
-    // The pan tool is deliberately separate from pointer/scrub: dragging the
-    // trace moves the review window without changing the EEG cursor.
-    if ((s.tool as string) === "pan") {
+    // Pan is the baseline interaction: dragging moves the review window while
+    // clicking empty trace seeks the EEG cursor.
+    if (s.tool === "pan") {
       dragRef.current = {
         kind: "editor-pan",
         x0: e.clientX,
@@ -1226,7 +1226,7 @@ export function WaveformView() {
         ref={wrapRef}
         className={cn(
           "relative min-h-0 flex-1 overflow-hidden bg-bg select-none",
-          (tool as string) === "pan" ? "cursor-grab touch-none" : "cursor-crosshair",
+          tool === "pan" ? "cursor-grab touch-none" : "cursor-crosshair",
         )}
         onPointerDown={onEditorPointer}
         onPointerMove={onPointerMove}

@@ -86,12 +86,12 @@ export function useEditorKeys(onToggleFocus?: () => void) {
       }
       if (e.key === "a" || e.key === "A") {
         e.preventDefault();
-        s.setTool(s.tool === "annotate" ? "pointer" : "annotate");
+        s.setTool(s.tool === "annotate" ? "pan" : "annotate");
         return;
       }
       if (e.key === "c" || e.key === "C") {
         e.preventDefault();
-        s.setTool(s.tool === "caliper" ? "pointer" : "caliper");
+        s.setTool(s.tool === "caliper" ? "pan" : "caliper");
         return;
       }
       if (e.key === "PageDown") {

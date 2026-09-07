@@ -12,7 +12,6 @@ import {
 import { Activity, PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ControlPanel } from "./control-panel";
-import { ReviewBar } from "./review-bar";
 import { Transport } from "./transport";
 import { WaveformView } from "./waveform-view";
 import { useEditorKeys } from "./use-editor-keys";
@@ -78,7 +77,6 @@ export function Workstation() {
             }}
             onAbout={() => setAboutOpen(true)}
           />
-          <ReviewBar />
         </>
       )}
 
