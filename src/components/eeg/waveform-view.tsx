@@ -53,9 +53,6 @@ const EVENT_LANE = 18;
 // the compact gutter affordance. The remaining plot height is redistributed
 // across visible channels by laneLayout.
 const HIDDEN_LANE_HEIGHT = 24;
-const MIN_VISIBLE_LANE_HEIGHT = 32;
-const TARGET_VISIBLE_LANE_HEIGHT = 36;
-const MAX_VISIBLE_LANE_HEIGHT = 42;
 const CHAIN_GAP = 7;
 
 /** Keep the montage's related derivations together without hiding any valid
@@ -172,9 +169,8 @@ function laneLayout(
         : total,
     0,
   );
-  // Use a stable clinical row metric instead of stretching a handful of lanes
-  // to fill the viewport. Rows stay readable in short views, and chain gaps
-  // remain obvious at every recording density.
+  // Keep hidden channels compact, then distribute all remaining plot height
+  // across visible channels so a large viewport is fully utilized.
   const gap = boundaries > 0 ? CHAIN_GAP : 0;
   const available = Math.max(1, plotHeight - boundaries * gap);
   const hiddenCount = list.reduce((total, track) => total + (hidden.has(track.id) ? 1 : 0), 0);
@@ -190,17 +186,7 @@ function laneLayout(
         )
       : 0;
   const visibleHeight = visibleCount > 0
-    ? (() => {
-        const raw = (available - hiddenCount * hiddenHeight) / visibleCount;
-        // If the viewport is dense, use all available height so every lane
-        // remains hit-testable. Otherwise cap the row height to avoid a sparse
-        // recording becoming a set of comically tall traces.
-        return raw < MIN_VISIBLE_LANE_HEIGHT
-          ? Math.max(1, raw)
-          : raw >= TARGET_VISIBLE_LANE_HEIGHT
-            ? Math.min(MAX_VISIBLE_LANE_HEIGHT, raw)
-            : raw;
-      })()
+    ? Math.max(1, (available - hiddenCount * hiddenHeight) / visibleCount)
     : 0;
   let top = 0;
   return list.map((track, index) => {
@@ -1970,45 +1956,36 @@ function TrackGutter({
       )}
       style={{ ...(lane ? { top: lane.top, height: lane.height } : { height: `${100 / count}%` }), borderLeftColor: color }}
     >
+      <button
+        type="button"
+        title={hidden ? "Show channel" : "Hide channel"}
+        aria-label={`${hidden ? "Show" : "Hide"} ${track.label}`}
+        aria-pressed={hidden}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={() => toggleTrackVisibility(track.id)}
+        className={cn(
+          "grid size-5 shrink-0 place-items-center rounded-sm text-subtle hover:bg-surface-2 hover:text-fg",
+          hidden && "bg-surface-2",
+        )}
+      >
+        {hidden ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+      </button>
+      <span
+        className={cn(
+          "grid size-5 shrink-0 place-items-center text-[0.5625rem] font-semibold uppercase",
+          lat === "left" && "text-hemi-l",
+          lat === "right" && "text-hemi-r",
+          lat === "midline" && "text-hemi-c",
+          lat === "unknown" && "text-subtle",
+        )}
+        aria-label={`Laterality ${lat}`}
+      >
+        {lat === "left" ? "L" : lat === "right" ? "R" : lat === "midline" ? "C" : "—"}
+      </span>
       {hidden ? (
-        <>
-          <button
-            type="button"
-            title="Show channel"
-            aria-label={`Show ${track.label}`}
-            aria-pressed
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => toggleTrackVisibility(track.id)}
-            className="grid size-5 shrink-0 place-items-center rounded-sm bg-surface-2 text-subtle hover:text-fg"
-          >
-            <EyeOff className="size-3" />
-          </button>
-          <span className="shrink-0 text-[0.5625rem] font-semibold uppercase tracking-wide text-subtle">Hidden</span>
-        </>
+        <span className="shrink-0 text-[0.5625rem] font-semibold uppercase tracking-wide text-subtle">Hidden</span>
       ) : (
         <>
-          <span
-            className={cn(
-              "shrink-0 px-0.5 text-[0.5625rem] font-semibold uppercase",
-              lat === "left" && "text-hemi-l",
-              lat === "right" && "text-hemi-r",
-              lat === "midline" && "text-hemi-c",
-              lat === "unknown" && "text-subtle",
-            )}
-          >
-            {lat === "left" ? "L" : lat === "right" ? "R" : lat === "midline" ? "C" : "—"}
-          </span>
-          <button
-            type="button"
-            title="Hide channel"
-            aria-label={`Hide ${track.label}`}
-            aria-pressed={false}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => toggleTrackVisibility(track.id)}
-            className="grid size-5 shrink-0 place-items-center rounded-sm text-subtle hover:bg-surface-2 hover:text-fg"
-          >
-            <Eye className="size-3" />
-          </button>
           <button
             type="button"
             title="Solo — double-click for exclusive"
