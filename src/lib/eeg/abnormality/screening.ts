@@ -857,6 +857,10 @@ function evaluateDetectors(
       start: recordingOffset + phenomenon.evidence.startSeconds,
       end: recordingOffset + phenomenon.evidence.endSeconds,
     };
+    // A detector can emit many intervals for the same channel set. Include
+    // the measured bounds in its stable identity so UI selection never
+    // collapses repeated findings onto the first matching marker.
+    finding.id = `${finding.id}-${Math.round(finding.eventInterval.start * 1000)}-${Math.round(finding.eventInterval.end * 1000)}`;
   }
 
   // Keep detector order stable even when no channel had enough data.
@@ -1054,11 +1058,17 @@ export function detectDeterministicAnnotations(
   return selected.map((finding) => {
     const exact = finding.eventInterval;
     const start = clamp(exact?.start ?? 0, 0, duration);
+    const measuredEnd = exact ? clamp(Math.max(exact.end, start), start, duration) : start;
+    const measuredDuration = measuredEnd - start;
+    const reviewDuration = Math.min(measuredDuration, 10);
     const end = exact
-      ? clamp(Math.max(exact.end, start), start, duration)
+      ? Math.min(duration, start + Math.max(0.02, reviewDuration))
       : Math.min(duration, start + 0.2);
     const ids = finding.channelIds.filter((id) => channels.some((channel) => channel.id === id));
     const recordLevel = exact ? "" : "Record-level screen · ";
+    const clippedInterval = exact && measuredDuration > reviewDuration + 1e-6
+      ? ` · Measured span ${measuredDuration.toFixed(1)} s; marker shows the first ${reviewDuration.toFixed(0)} s review window.`
+      : "";
     return {
       id: `screen-${finding.id}`,
       start,
@@ -1066,7 +1076,7 @@ export function detectDeterministicAnnotations(
       trackId: ids.length === 1 ? ids[0]! : null,
       ...(ids.length > 1 ? { trackIds: ids } : {}),
       type: ANNOTATION_TYPE_BY_DETECTOR[finding.detector],
-      text: `${finding.title} · ${recordLevel}${finding.summary}`,
+      text: `${finding.title} · ${recordLevel}${finding.summary}${clippedInterval}`,
       source: "auto" as const,
       confidence: finding.confidence,
     };

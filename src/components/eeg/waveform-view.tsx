@@ -59,6 +59,36 @@ const EVENT_LANE = 18;
 const HIDDEN_LANE_HEIGHT = 24;
 const CHAIN_GAP = 7;
 
+function visibleTimelineAnnotations(state: ReturnType<typeof useEegStore.getState>): Annotation[] {
+  if (!state.showAnnotations) return [];
+  return state.annotations.filter(
+    (annotation) => annotation.source !== "auto" || (state.showAuto && annotation.type !== "qrs"),
+  );
+}
+
+function hitTimelineAnnotation(
+  annotations: readonly Annotation[],
+  x: number,
+  plotLeft: number,
+  plotWidth: number,
+  total: number,
+  selectedId: string | null,
+): Annotation | null {
+  if (total <= 0 || plotWidth <= 0) return null;
+  const hits = annotations
+    .filter((annotation) => {
+      const start = plotLeft + (annotation.start / total) * plotWidth;
+      const end = plotLeft + (annotation.end / total) * plotWidth;
+      return x >= start - 5 && x <= Math.max(start + 5, end + 5);
+    })
+    .sort((a, b) =>
+      (a.end - a.start) - (b.end - b.start) || a.start - b.start || a.id.localeCompare(b.id),
+    );
+  if (!hits.length) return null;
+  const current = hits.findIndex((annotation) => annotation.id === selectedId);
+  return hits[current >= 0 ? (current + 1) % hits.length : 0] ?? null;
+}
+
 type CanvasPalette = {
   bg: string;
   ruler: string;
@@ -915,6 +945,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
             s.annotations,
             s.showAuto,
             s.showAnnotations,
+            s.selectedAnnotation,
             effectiveTheme,
           );
         }
@@ -931,7 +962,20 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
             dsaSig = sig;
             drawDsa(ctx, dsa, dsaW, dsaH, s.dsa, effectiveTheme);
           }
-          drawDsaOverlay(octx, dsaW, dsaH, t, viewStart, viewDur, total, effectiveTheme);
+          drawDsaOverlay(
+            octx,
+            dsaW,
+            dsaH,
+            t,
+            viewStart,
+            viewDur,
+            total,
+            s.annotations,
+            s.showAuto,
+            s.showAnnotations,
+            s.selectedAnnotation,
+            effectiveTheme,
+          );
         }
       }
     };
@@ -1092,6 +1136,22 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
     const frac = clamp(x / Math.max(1, w), 0, 1);
     const tClick = frac * segment.duration;
     const s = useEegStore.getState();
+    const localY = e.clientY - rect.top;
+    if (localY >= rect.height - 18 && localY <= rect.height - 9) {
+      const hit = hitTimelineAnnotation(
+        visibleTimelineAnnotations(s),
+        x,
+        0,
+        w,
+        segment.duration,
+        s.selectedAnnotation,
+      );
+      if (hit) {
+        s.selectAnnotation(hit.id);
+        dragRef.current = null;
+        return;
+      }
+    }
     if (s.followPlayhead) s.setFollow(false);
     const follow = s.followPlayhead && playback.playing;
     const vs = follow ? followViewStart(eegNow(s), s.viewDuration, segment.duration) : s.viewStart;
@@ -1115,6 +1175,23 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
     const x = e.clientX - rect.left - DSA_LEFT;
     const frac = clamp(x / plotW, 0, 1);
     const s = useEegStore.getState();
+    const localX = e.clientX - rect.left;
+    const localY = e.clientY - rect.top;
+    if (localY >= DSA_TOP && localY <= DSA_TOP + 10) {
+      const hit = hitTimelineAnnotation(
+        visibleTimelineAnnotations(s),
+        localX,
+        DSA_LEFT,
+        plotW,
+        segment.duration,
+        s.selectedAnnotation,
+      );
+      if (hit) {
+        s.selectAnnotation(hit.id);
+        dragRef.current = null;
+        return;
+      }
+    }
     const follow = s.followPlayhead && playback.playing;
     const vs = follow ? followViewStart(eegNow(s), s.viewDuration, segment.duration) : s.viewStart;
     const vd = s.viewDuration;
@@ -1841,7 +1918,9 @@ function drawOverviewWaves(
   ctx.fillRect(0, 0, cssW, cssH);
   if (list.length === 0 || total <= 0) return;
   const nPix = Math.max(1, Math.ceil(cssW * dpr));
-  const overviewPlotH = Math.max(1, cssH - 9);
+  // Reserve separate compact lanes for event markers and time labels so
+  // neither obscures the waveform rows.
+  const overviewPlotH = Math.max(1, cssH - 18);
   const hidden = new Set(s.hiddenTrackIds);
   const grouped = new Map<string, ProcessedTrack[]>();
   list.forEach((track, index) => {
@@ -1964,6 +2043,7 @@ function drawOverviewOverlay(
   annotations: Annotation[] = [],
   showAuto = true,
   showAnnotations = true,
+  selectedId: string | null = null,
   theme: ResolvedTheme = "dark",
 ) {
   const palette = CANVAS_PALETTES[theme];
@@ -1971,16 +2051,6 @@ function drawOverviewOverlay(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
   if (total <= 0) return;
-  if (showAnnotations) {
-    for (const a of annotations) {
-      if (a.source === "auto" && (a.type === "qrs" || !showAuto)) continue;
-      const x = (a.start / total) * cssW;
-      ctx.fillStyle = annotationColorForTheme(a.type, theme);
-      // Keep findings in a dedicated bottom rail; full-height event stripes
-      // obscure the compact overview waveform when a recording has many cues.
-      ctx.fillRect(x, cssH - 7, 2, 7);
-    }
-  }
   const x0 = clamp((viewStart / total) * cssW, 0, cssW);
   const x1 = clamp(((viewStart + viewDur) / total) * cssW, 0, cssW);
   const width = Math.max(8, x1 - x0);
@@ -1997,6 +2067,28 @@ function drawOverviewOverlay(
   ctx.fillStyle = palette.navigatorHandle;
   ctx.fillRect(x0 - 2, 0, 5, cssH);
   ctx.fillRect(x0 + width - 3, 0, 5, cssH);
+
+  if (showAnnotations) {
+    ctx.fillStyle = palette.ruler;
+    ctx.globalAlpha = 0.82;
+    ctx.fillRect(0, cssH - 18, cssW, 9);
+    ctx.globalAlpha = 1;
+    for (const annotation of annotations) {
+      if (annotation.source === "auto" && (annotation.type === "qrs" || !showAuto)) continue;
+      const start = clamp((annotation.start / total) * cssW, 0, cssW);
+      const end = clamp((annotation.end / total) * cssW, start, cssW);
+      const markerWidth = Math.max(3, end - start);
+      ctx.fillStyle = annotationColorForTheme(annotation.type, theme);
+      ctx.globalAlpha = annotation.id === selectedId ? 1 : annotation.source === "auto" ? 0.78 : 0.92;
+      ctx.fillRect(start, cssH - 16, markerWidth, 5);
+      if (annotation.id === selectedId) {
+        ctx.strokeStyle = palette.text;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(start - 0.5, cssH - 17.5, markerWidth + 1, 7);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
 
   ctx.strokeStyle = palette.cursor;
   ctx.lineWidth = 1.5;
@@ -2117,6 +2209,10 @@ function drawDsaOverlay(
   viewStart: number,
   viewDur: number,
   total: number,
+  annotations: Annotation[] = [],
+  showAuto = true,
+  showAnnotations = true,
+  selectedId: string | null = null,
   theme: ResolvedTheme = "dark",
 ) {
   const palette = CANVAS_PALETTES[theme];
@@ -2142,6 +2238,27 @@ function drawDsaOverlay(
   ctx.fillStyle = palette.navigatorHandle;
   ctx.fillRect(x0 - 2, plotTop, 5, plotH);
   ctx.fillRect(x0 + width - 3, plotTop, 5, plotH);
+  if (showAnnotations) {
+    ctx.fillStyle = palette.ruler;
+    ctx.globalAlpha = 0.72;
+    ctx.fillRect(DSA_LEFT, plotTop, plotW, 9);
+    ctx.globalAlpha = 1;
+    for (const annotation of annotations) {
+      if (annotation.source === "auto" && (annotation.type === "qrs" || !showAuto)) continue;
+      const start = clamp(plotX(annotation.start), DSA_LEFT, DSA_LEFT + plotW);
+      const end = clamp(plotX(annotation.end), start, DSA_LEFT + plotW);
+      const markerWidth = Math.max(3, end - start);
+      ctx.fillStyle = annotationColorForTheme(annotation.type, theme);
+      ctx.globalAlpha = annotation.id === selectedId ? 1 : annotation.source === "auto" ? 0.78 : 0.92;
+      ctx.fillRect(start, plotTop + 2, markerWidth, 5);
+      if (annotation.id === selectedId) {
+        ctx.strokeStyle = palette.text;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(start - 0.5, plotTop + 0.5, markerWidth + 1, 8);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
   ctx.strokeStyle = palette.cursor;
   ctx.lineWidth = 1.25;
   ctx.beginPath();

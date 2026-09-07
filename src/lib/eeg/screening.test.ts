@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { runDeterministicScreeningSync } from "./abnormality/screening.ts";
+import { detectDeterministicAnnotations, runDeterministicScreeningSync } from "./abnormality/screening.ts";
 
 const fs = 200;
 function channel(id: string, samples: Float32Array, laterality: "left" | "right" | "midline" | "unknown" = "unknown") {
@@ -73,5 +73,19 @@ describe("deterministic phenomenon screening", () => {
     const first = runDeterministicScreeningSync(input, { contextWindowSeconds: [2, 6] });
     const second = runDeterministicScreeningSync(input, { contextWindowSeconds: [2, 6] });
     assert.deepEqual(first, second);
+  });
+
+  it("keeps repeated candidates distinct and bounds long review markers", () => {
+    const annotations = detectDeterministicAnnotations(
+      [
+        channel("F3", tone(2.3, 12, 35), "left"),
+        channel("C3", tone(2.3, 12, 30), "left"),
+      ],
+      12,
+    );
+    assert.ok(annotations.length > 0);
+    assert.equal(new Set(annotations.map((annotation) => annotation.id)).size, annotations.length);
+    assert.ok(annotations.every((annotation) => annotation.end - annotation.start <= 10.000_001));
+    assert.ok(annotations.some((annotation) => annotation.text.includes("marker shows")));
   });
 });
