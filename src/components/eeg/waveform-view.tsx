@@ -710,7 +710,6 @@ export function WaveformView() {
             s.showAnnotations,
             editorList,
             displayStart,
-            s.focusedTrackIds,
             s.hoverCursor,
             laneLayout(editorList, Math.max(1, cssH - RULER), s.hiddenTrackIds),
             hoveredAnnotationRef.current,
@@ -1392,16 +1391,13 @@ function drawEditor(
     const lat = st?.lateralityOverride ?? tr.laterality;
     const color = traceColorForLane(laneGroup(tr, i, list), tr.kind, lat, tr.id);
     const hovered = hoveredTrackId === tr.id;
-    const focused = s.focusedTrackIds.length === 0 || s.focusedTrackIds.includes(tr.id);
-    const alpha = focused
-      ? hovered
+    const alpha = hovered
+      ? 1
+      : live
         ? 1
-        : live
-          ? 1
-          : anySolo || st?.mute
-            ? 0.2
-            : 0.56
-      : 0.18;
+        : anySolo || st?.mute
+          ? 0.2
+          : 0.56;
     const raw = traceWindow(tr.samples, tr.sampleRate, localViewStart, localViewEnd, nPix);
     const profile = tr.kind === "ekg" ? cachedEkgDisplayProfile(tr.samples) : null;
     const display = profile
@@ -1474,7 +1470,6 @@ function drawEditorOverlay(
   showAnnotations = true,
   tracks: ProcessedTrack[] = [],
   sampleStart = 0,
-  focusedTrackIds: string[] = [],
   hoverCursor: { timeSec: number; trackId: string | null } | null = null,
   lanes: LaneRect[] = [],
   hoveredAnnotationId: string | null = null,
@@ -1554,18 +1549,6 @@ function drawEditorOverlay(
       }
     }
     ctx.globalAlpha = 1;
-  }
-  if (focusedTrackIds.length > 0) {
-    const laneIds = tracks.filter((track) => track.kind !== "extra").map((track) => track.id);
-    const laneHeight = Math.max(1, (cssH - RULER) / Math.max(1, laneIds.length));
-    ctx.strokeStyle = "rgba(126,184,201,0.7)";
-    ctx.lineWidth = 1;
-    for (const trackId of focusedTrackIds) {
-      const lane = laneIds.indexOf(trackId);
-      if (lane < 0) continue;
-      const rect = lanes[lane] ?? { top: lane * laneHeight, height: laneHeight };
-      ctx.strokeRect(plotX + 1, RULER + rect.top + 1, plotW - 2, Math.max(1, rect.height - 2));
-    }
   }
   if (caliper) {
     const xa = plotX + clamp((caliper.a - viewStart) / Math.max(1e-6, viewDur), 0, 1) * plotW;
@@ -1939,7 +1922,6 @@ function TrackGutter({
   const setGain = useEegStore((s) => s.setGain);
   const hidden = useEegStore((s) => s.hiddenTrackIds.includes(track.id));
   const toggleTrackVisibility = useEegStore((s) => s.toggleTrackVisibility);
-  const focused = useEegStore((s) => s.focusedTrackIds.length === 0 || s.focusedTrackIds.includes(track.id));
   const lat = st?.lateralityOverride ?? track.laterality;
   const color = traceColorForLane(group, track.kind, lat, track.id);
   const muted = Boolean(st?.mute);
@@ -1950,7 +1932,6 @@ function TrackGutter({
         "pointer-events-auto absolute left-0 right-0 flex items-center gap-1 overflow-hidden border-b border-border/50 px-1.5",
         previous && displayBand(previous) !== displayBand(track) && "border-t-2 border-accent/30",
         previousGroup && previousGroup !== group && displayBand(previous!) === displayBand(track) && "border-t border-accent/35",
-        focused && "bg-accent/8",
         hidden && "opacity-50",
         "border-l-2",
       )}

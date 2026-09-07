@@ -19,7 +19,6 @@ import {
 import { detectMorphologies } from "@/lib/eeg/patterns";
 import {
   annotationToExport,
-  annotationTrackIds,
   annotationHistoryRedo,
   annotationHistoryUndo,
   validateAnnotations,
@@ -127,7 +126,6 @@ export interface AppState {
   keysOpen: boolean;
   annotations: Annotation[];
   selectedAnnotation: string | null;
-  focusedTrackIds: string[];
   hiddenTrackIds: string[];
   showAuto: boolean;
   showAnnotations: boolean;
@@ -540,7 +538,6 @@ export const useEegStore = create<AppState>((set, get) => {
     keysOpen: false,
     annotations: [],
     selectedAnnotation: null,
-    focusedTrackIds: [],
     hiddenTrackIds: [],
     showAuto: false,
     showAnnotations: true,
@@ -560,7 +557,6 @@ export const useEegStore = create<AppState>((set, get) => {
         annotationPast: [],
         annotationFuture: [],
         selectedAnnotation: null,
-        focusedTrackIds: [],
         hiddenTrackIds: [],
         recording: null,
         rawSegment: null,
@@ -1004,8 +1000,7 @@ export const useEegStore = create<AppState>((set, get) => {
     addAnnotation: (a) => {
       const item = validateAnnotations([{ ...a, id: nid(), source: "user" }], { duration: get().segment?.duration ?? 0 })[0]!;
       set({ annotationPast: [...get().annotationPast.slice(-49), get().annotations], annotationFuture: [],
-        annotations: [...get().annotations, item], selectedAnnotation: item.id,
-        focusedTrackIds: [...(annotationTrackIds(item) ?? [])], tool: "pointer" });
+        annotations: [...get().annotations, item], selectedAnnotation: item.id, tool: "pointer" });
       get().selectAnnotation(item.id);
     },
     updateAnnotation: (id, patch) => {
@@ -1013,25 +1008,21 @@ export const useEegStore = create<AppState>((set, get) => {
       if (!old || old.source !== "user") return;
       const item = validateAnnotations([{ ...old, ...patch, id, source: "user" }], { duration: get().segment?.duration ?? 0 })[0]!;
       set({ annotationPast: [...get().annotationPast.slice(-49), get().annotations], annotationFuture: [],
-        annotations: get().annotations.map((a) => a.id === id ? item : a),
-        focusedTrackIds: get().selectedAnnotation === id
-          ? [...(annotationTrackIds(item) ?? [])]
-          : get().focusedTrackIds });
+        annotations: get().annotations.map((a) => a.id === id ? item : a) });
       if (get().selectedAnnotation === id) get().selectAnnotation(id);
     },
     removeAnnotation: (id) => {
       if (!get().annotations.some((a) => a.id === id && a.source === "user")) return;
       set({ annotationPast: [...get().annotationPast.slice(-49), get().annotations], annotationFuture: [],
-        annotations: get().annotations.filter((a) => a.id !== id), selectedAnnotation: null,
-        focusedTrackIds: [] });
+        annotations: get().annotations.filter((a) => a.id !== id), selectedAnnotation: null });
     },
     undoAnnotations: () => {
       const h = annotationHistoryUndo(get().annotationPast, get().annotations, get().annotationFuture);
-      set({ annotations: h.current, annotationPast: h.past, annotationFuture: h.future, selectedAnnotation: null, focusedTrackIds: [] });
+      set({ annotations: h.current, annotationPast: h.past, annotationFuture: h.future, selectedAnnotation: null });
     },
     redoAnnotations: () => {
       const h = annotationHistoryRedo(get().annotationPast, get().annotations, get().annotationFuture);
-      set({ annotations: h.current, annotationPast: h.past, annotationFuture: h.future, selectedAnnotation: null, focusedTrackIds: [] });
+      set({ annotations: h.current, annotationPast: h.past, annotationFuture: h.future, selectedAnnotation: null });
     },
     importAnnotations: (items) => {
       const imported = validateAnnotations(items, { duration: get().segment?.duration ?? 0 }).map((a) => ({ ...a, id: nid(), source: "file" as const }));
@@ -1042,7 +1033,7 @@ export const useEegStore = create<AppState>((set, get) => {
     selectAnnotation: (id) => {
       const a = get().annotations.find((x) => x.id === id);
       if (!a) {
-        set({ selectedAnnotation: null, focusedTrackIds: [] });
+        set({ selectedAnnotation: null });
         return;
       }
       playback.seek(a.start);
@@ -1052,7 +1043,6 @@ export const useEegStore = create<AppState>((set, get) => {
         startSec: a.start,
         endSec: a.end,
       });
-      set({ focusedTrackIds: [...(annotationTrackIds(a) ?? [])] });
       refreshDisplayWindow(nav.viewport.startSec, nav.viewport.durationSec);
     },
 

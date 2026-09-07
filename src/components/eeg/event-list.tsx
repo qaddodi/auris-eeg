@@ -66,7 +66,6 @@ function NumberField({
 export function EventList() {
   const annotations = useEegStore((s) => s.annotations);
   const selectedId = useEegStore((s) => s.selectedAnnotation);
-  const focusedTrackIds = useEegStore((s) => s.focusedTrackIds);
   const showAuto = useEegStore((s) => s.showAuto);
   const selectAnnotation = useEegStore((s) => s.selectAnnotation);
   const nextAnnotation = useEegStore((s) => s.nextAnnotation);
@@ -108,11 +107,6 @@ export function EventList() {
     const ids = annotationTrackIds(annotation) ?? [];
     if (ids.length === 0) return "All channels";
     return ids.map((id) => trackLabels.get(id) ?? id).join(", ");
-  }
-
-  function focusedChannelsFor(annotation: Annotation): string {
-    if (focusedTrackIds.length === 0) return channelsFor(annotation);
-    return focusedTrackIds.map((id) => trackLabels.get(id) ?? id).join(", ");
   }
 
   useEffect(() => setNewType(pendingType), [pendingType]);
@@ -430,8 +424,8 @@ export function EventList() {
               {formatTime(Math.max(0, selected.end - selected.start), true)}
             </span>
             <span className="text-subtle">Channels</span>
-            <span className="truncate text-right text-fg" title={focusedChannelsFor(selected)}>
-              {focusedChannelsFor(selected)}
+            <span className="truncate text-right text-fg" title={channelsFor(selected)}>
+              {channelsFor(selected)}
             </span>
             {selected.source === "auto" && (
               <>
