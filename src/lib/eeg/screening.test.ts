@@ -43,13 +43,13 @@ describe("deterministic phenomenon screening", () => {
 
   it("labels sustained 2.3 Hz activity rhythmically", () => {
     const result = runDeterministicScreeningSync({ channels: [channel("F3", tone(2.3, 12, 35), "left"), channel("C3", tone(2.3, 12, 30), "left")] }, { contextWindowSeconds: 12 });
-    assert.ok(result.findings.some((finding) => /rhythmic/i.test(finding.detector) && /2\\.3|2\\.2|2\\.4/.test(finding.title + finding.summary)));
+    assert.ok(result.findings.some((finding) => /rhythmic/i.test(finding.detector) && /2\.3|2\.2|2\.4/.test(finding.title + finding.summary)));
     assert.equal(result.findings.some((finding) => /seizure/i.test(finding.title)), false);
   });
 
   it("estimates a roughly 1.1 Hz periodic template train", () => {
     const result = runDeterministicScreeningSync({ channels: [channel("F3", pulseTrain(12, 1 / 1.1), "left"), channel("C3", pulseTrain(12, 1 / 1.1), "left")] }, { contextWindowSeconds: 12 });
-    assert.ok(result.findings.some((finding) => /periodic/i.test(finding.detector) && /1\\.0|1\\.1|1\\.2/.test(finding.title + finding.summary)));
+    assert.ok(result.findings.some((finding) => /periodic/i.test(finding.detector) && /1\.0|1\.1|1\.2/.test(finding.title + finding.summary)));
   });
 
   it("detects burst suppression and sleep spindle candidates", () => {

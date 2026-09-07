@@ -383,12 +383,13 @@ function powerInBand(values: readonly number[], sampleRate: number, low: number,
     ? values
     : Array.from({ length: maxSamples }, (_, index) => values[Math.floor(index * values.length / maxSamples)]);
   const n = data.length;
+  const effectiveSampleRate = sampleRate * n / values.length;
   const center = mean(data);
-  const upper = Math.min(high, sampleRate / 2);
+  const upper = Math.min(high, effectiveSampleRate / 2);
   if (upper <= low) return 0;
   let power = 0;
   for (let bin = 1; bin <= Math.floor(n / 2); bin += 1) {
-    const frequency = (bin * sampleRate) / n;
+    const frequency = (bin * effectiveSampleRate) / n;
     if (frequency < low || frequency >= upper) continue;
     let real = 0;
     let imaginary = 0;

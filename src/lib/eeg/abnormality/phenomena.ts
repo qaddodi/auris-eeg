@@ -153,7 +153,12 @@ function valuesOf(channel: PhenomenonChannel, start = 0, end = channel.samples.l
 function robustStats(values: readonly number[]): { center: number; scale: number } | null {
   if (values.length < 16) return null;
   const center = median(values);
-  const scale = median(values.map((value) => Math.abs(value - center))) * 1.4826;
+  const deviations = values.map((value) => Math.abs(value - center));
+  const madScale = median(deviations) * 1.4826;
+  // Sparse transients can legitimately have a zero MAD because their local
+  // baseline occupies most samples. Preserve that baseline while deriving a
+  // bounded non-zero reference from the largest observed deflection.
+  const scale = madScale > 1e-9 ? madScale : Math.max(...deviations) / 10;
   return finite(scale) && scale > 1e-9 ? { center, scale } : null;
 }
 
