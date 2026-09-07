@@ -20,6 +20,22 @@ substitutions are disclosed below. No Auris mode is a validated seizure detector
 
 ## Primary evidence
 
+### Waveform review candidates
+
+Kane et al., 2017 revised IFCN glossary, *Clinical Neurophysiology* 128:1334–1374. DOI: [10.1016/j.clinph.2017.02.010](https://doi.org/10.1016/j.clinph.2017.02.010) — descriptive spike 20–<70 ms and sharp wave 70–200 ms, with morphology/context criteria.
+
+Hirsch et al., 2021 ACNS Critical Care EEG Terminology, *Journal of Clinical Neurophysiology* 38:1–29. DOI: [10.1097/WNP.0000000000000806](https://doi.org/10.1097/WNP.0000000000000806) — standardized descriptive terminology; not an automated-detector validation.
+
+Nuwer, 1997 assessment of digital EEG/QEEG, *Neurology* 49:277–292. [ACNS statement](https://www.acns.org/pdf/guidelines/QEEG-Statement.pdf) — automated candidate detections require professional visual review and false positives are frequent.
+
+Auris borrows descriptive duration and morphology vocabulary only. Its MAD
+threshold, scoring, cross-track clustering, and independent 30-second
+time-bucket caps are engineering choices with no established sensitivity or
+specificity. It intentionally removed zero-crossing rhythm labels and
+beginning-biased global caps. These candidates make no claim of normality,
+abnormality, epileptiformity, or seizure detection, and have no validation
+metrics.
+
 ### Norata et al., 2023 — historical pen-on-paper sound
 
 Davide Norata, Serena Broggi, Lara Alvisi, Simona Lattanzi, Francesco Brigo, and Paolo Tinuper. “The EEG pen-on-paper sound: History and recent advances.” *Seizure* 107 (2023): 67–70. DOI: [10.1016/j.seizure.2023.03.011](https://doi.org/10.1016/j.seizure.2023.03.011).

@@ -319,7 +319,7 @@ export function EventList() {
             <option value="all">All sources</option>
             <option value="user">Mine</option>
             <option value="file">File</option>
-            <option value="auto">Suggested</option>
+            <option value="auto">Candidates</option>
           </select>
           <Button
             size="iconSm"
@@ -367,8 +367,12 @@ export function EventList() {
               </span>
               <span className="min-w-0 flex-1 truncate text-fg" title={channelsFor(annotation)}>
                 <span className="font-medium">
-                  {ANNOTATION_TYPES.find((type) => type.id === annotation.type)?.label ??
-                    annotation.type}
+                  {annotation.source === "auto" && annotation.type === "spike"
+                    ? "Spike-like candidate"
+                    : annotation.source === "auto" && annotation.type === "sharp"
+                      ? "Sharp-wave-like candidate"
+                      : ANNOTATION_TYPES.find((type) => type.id === annotation.type)?.label ??
+                        annotation.type}
                 </span>
                 <span className="text-muted"> · {channelsFor(annotation)}</span>
                 {annotation.text ? ` · ${annotation.text}` : ""}
@@ -381,7 +385,7 @@ export function EventList() {
                 title={annotationSourceLabel(annotation.source)}
               >
                 {annotation.source === "auto"
-                  ? "suggested"
+                  ? "candidate"
                   : annotation.source === "file"
                     ? "file"
                     : "mine"}
@@ -429,16 +433,17 @@ export function EventList() {
             </span>
             {selected.source === "auto" && (
               <>
-                <span className="text-subtle">Heuristic score</span>
+                <span className="text-subtle">Rule score</span>
                 <span className="font-mono text-right tabular-nums text-fg">
-                  {(selected.confidence * 100).toFixed(0)}%
+                  {Math.round(selected.confidence * 100)} / 90
                 </span>
               </>
             )}
           </div>
           <p className="text-[0.6875rem] leading-4 text-muted">
             {MORPH_HELP[selected.type]}{" "}
-            {selected.source === "auto" && "This is an educational suggestion, not a diagnosis."}
+            {selected.source === "auto" &&
+              "Rule-based review cue only. It has not been validated to identify abnormalities and requires expert visual review."}
           </p>
           {isEditable ? (
             <>

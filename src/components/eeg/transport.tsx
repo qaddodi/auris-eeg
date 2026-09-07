@@ -250,8 +250,8 @@ export function Transport({
           <Button size="sm" variant={showAnnotations ? "default" : "ghost"} className={toolClass} aria-pressed={showAnnotations} aria-label={`${showAnnotations ? "Hide" : "Show"} markers (${confirmed})`} title={`${showAnnotations ? "Hide" : "Show"} markers`} onClick={() => setShowAnnotations(!showAnnotations)}>
             {showAnnotations ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />} Markers <Count>{confirmed}</Count>
           </Button>
-          <Button size="sm" variant={showAuto ? "default" : "ghost"} className={toolClass} aria-pressed={showAuto} aria-label={`${showAuto ? "Hide" : "Show"} suggestions (${suggestions})`} title={`${showAuto ? "Hide" : "Show"} suggestions`} onClick={() => setShowAuto(!showAuto)}>
-            <Lightbulb aria-hidden="true" /> Suggestions <Count>{suggestions}</Count>
+          <Button size="sm" variant={showAuto ? "default" : "ghost"} className={toolClass} aria-pressed={showAuto} aria-label={`${showAuto ? "Hide" : "Show"} rule-based non-diagnostic review candidates (${suggestions})`} title={`${showAuto ? "Hide" : "Show"} rule-based review candidates`} onClick={() => setShowAuto(!showAuto)}>
+            <Lightbulb aria-hidden="true" /> Review cues <Count>{suggestions}</Count>
           </Button>
           <Button size="sm" variant={showDsa ? "default" : "ghost"} className={toolClass} aria-pressed={showDsa} title={showDsa ? "Hide DSA" : "Show DSA"} onClick={() => setShowDsa(!showDsa)}>
             <Activity aria-hidden="true" /> DSA

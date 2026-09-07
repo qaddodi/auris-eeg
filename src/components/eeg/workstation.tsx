@@ -185,8 +185,9 @@ export function Workstation() {
               symbolic mapping. It is evidence for a bounded listening study, not a validated
               clinical interpretation. Hybrid applies a disclosed downstream soft timbre while
               preserving mapped pitch and timing. Experimental and musical modes remain Level X.
-              Trace colors and the DSA display support visual review; suggested markers are
-              educational prompts, not findings.
+              Trace colors and the DSA display support visual review; rule-based review candidates
+              use descriptive waveform features, are spread across the recording, are not validated
+              findings, and require expert review.
             </p>
             <p>
               The overview shows the full recording and the highlighted window is the current editor

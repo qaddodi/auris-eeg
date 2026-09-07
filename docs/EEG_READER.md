@@ -18,6 +18,18 @@ The reader extracts EDF+ annotations from all annotation signals using absolute
 file-relative TAL onsets and strict UTF-8 decoding. The UI treats these as
 file annotations and does not interpret them as diagnoses.
 
+## Automated review candidates
+
+Auris generates deterministic, non-diagnostic review candidates using a local
+30-second robust median/MAD baseline. It uses descriptive duration bands of
+20–<70 ms and 70–200 ms, plus morphology support and cross-track clustering.
+Candidates are independently capped within 30-second buckets so early parts of
+a recording cannot consume a global quota. Candidate IDs are deterministic for
+the same recording and processing inputs.
+
+These cues make no claim of normality, abnormality, epileptiformity, or seizure
+detection, and have no validation metrics. They require expert visual review.
+
 ## Derivations and display
 
 Referential channels, standard longitudinal bipolar chains, transverse chains,
