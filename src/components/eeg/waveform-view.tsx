@@ -38,6 +38,7 @@ import {
   BAND_COLORS,
   BAND_LABELS,
   bandFromHz,
+  dsaBandRgb,
   dsaRgb,
   dsaUnit,
   freqWindow,
@@ -1566,6 +1567,23 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
         <div className="pointer-events-none absolute left-2 top-1 text-[0.625rem] font-medium uppercase tracking-wider text-subtle">
           DSA · PSD (dB)
         </div>
+        <div
+          className="pointer-events-none absolute left-[6.5rem] right-[4rem] top-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-sm bg-bg/80 px-1.5 py-0.5 text-[0.5625rem] font-medium shadow-border"
+          aria-label="Frequency band legend"
+        >
+          {BAND_LABELS.map((band) => (
+            <span key={band.id} className="flex items-center gap-1 whitespace-nowrap">
+              <span
+                className="size-2 rounded-[2px]"
+                style={{ backgroundColor: BAND_COLORS[band.id] }}
+                aria-hidden="true"
+              />
+              <span style={{ color: BAND_COLORS[band.id] }}>
+                {band.glyph} {band.range} Hz
+              </span>
+            </span>
+          ))}
+        </div>
       </div>
 
       <div
@@ -1586,7 +1604,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
         >
           <canvas ref={editorRef} className="absolute inset-0 size-full" />
           <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
-          {showDsaBands && (
+          {showDsaBands && !showDsa && (
             <div
               className="pointer-events-none absolute left-[6.5rem] right-2 top-0.5 z-20 flex flex-wrap items-center justify-end gap-x-2 gap-y-0.5 rounded-sm bg-bg/85 px-1.5 py-0.5 text-[0.5625rem] font-medium shadow-border"
               aria-label="Frequency band legend"
@@ -2271,7 +2289,8 @@ function drawDsa(
         fBin = Math.min(frame.nFreq - 1, Math.floor(u * (frame.nFreq - 1)));
       }
       const p = src[ti * frame.nFreq + fBin] ?? 0;
-      const [r, g, b] = dsaRgb(dsaUnit(p, frame.dbMin, frame.dbMax), theme);
+      const hz = (fBin * frame.fMax) / Math.max(1, frame.nFreq - 1);
+      const [r, g, b] = dsaBandRgb(dsaUnit(p, frame.dbMin, frame.dbMax), hz, theme);
       const i = (y * plotW + x) * 4;
       data[i] = r;
       data[i + 1] = g;

@@ -482,6 +482,44 @@ export function dsaRgb(u: number, theme: "dark" | "light" = "dark"): [number, nu
   return [253, 231, 37];
 }
 
+function hexRgb(hex: string): [number, number, number] {
+  return [
+    Number.parseInt(hex.slice(1, 3), 16),
+    Number.parseInt(hex.slice(3, 5), 16),
+    Number.parseInt(hex.slice(5, 7), 16),
+  ];
+}
+
+function mixRgb(
+  a: [number, number, number],
+  b: [number, number, number],
+  amount: number,
+): [number, number, number] {
+  const t = Math.max(0, Math.min(1, amount));
+  return [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t,
+  ];
+}
+
+/** Use the trace band hue for each frequency row while keeping PSD power as brightness. */
+export function dsaBandRgb(
+  u: number,
+  hz: number,
+  theme: "dark" | "light" = "dark",
+): [number, number, number] {
+  const base = hexRgb(BAND_COLORS[bandFromHz(hz)]);
+  const background: [number, number, number] = theme === "dark" ? [7, 8, 10] : [248, 250, 251];
+  const normalized = Math.max(0, Math.min(1, u));
+  // Keep the low-power floor close to the canvas background so quiet rows do
+  // not falsely read as strong delta/theta activity.
+  const contrast = Math.max(0, (normalized - 0.12) / 0.88);
+  const strength = Math.pow(contrast, 0.85);
+  const colored = mixRgb(background, base, strength);
+  return theme === "dark" ? mixRgb(colored, [255, 255, 255], 0.08 * strength) : colored;
+}
+
 export function dsaDb(power: number): number {
   return dbOfPower(power);
 }
