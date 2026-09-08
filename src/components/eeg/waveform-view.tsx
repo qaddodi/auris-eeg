@@ -38,7 +38,8 @@ import {
   BAND_COLORS,
   BAND_LABELS,
   bandFromHz,
-  dsaRgb,
+  dsaBandRgb,
+  dsaPowerRgb,
   dsaUnit,
   freqWindow,
   type DsaFrame,
@@ -2287,7 +2288,8 @@ function drawDsa(
         fBin = Math.min(frame.nFreq - 1, Math.floor(u * (frame.nFreq - 1)));
       }
       const p = src[ti * frame.nFreq + fBin] ?? 0;
-      const [r, g, b] = dsaRgb(dsaUnit(p, frame.dbMin, frame.dbMax), theme);
+      const hz = (fBin * frame.fMax) / Math.max(1, frame.nFreq - 1);
+      const [r, g, b] = dsaBandRgb(dsaUnit(p, frame.dbMin, frame.dbMax), hz, theme);
       const i = (y * plotW + x) * 4;
       data[i] = r;
       data[i + 1] = g;
@@ -2330,7 +2332,7 @@ function drawDsa(
   const legendH = Math.max(20, cssH - DSA_TOP - DSA_BOTTOM - 4);
   const gradient = ctx.createLinearGradient(0, legendY + legendH, 0, legendY);
   for (let i = 0; i <= 10; i++) {
-    const [r, g, b] = dsaRgb(i / 10, theme);
+    const [r, g, b] = dsaPowerRgb(i / 10, theme);
     gradient.addColorStop(i / 10, `rgb(${r} ${g} ${b})`);
   }
   ctx.fillStyle = gradient;
