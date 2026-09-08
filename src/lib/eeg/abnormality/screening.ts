@@ -656,6 +656,7 @@ function evaluateDetectors(
   measurements: readonly ScreeningChannelMeasurement[],
   input: ScreeningInput,
   lineFrequencies: readonly number[],
+  onProgress?: (fraction: number) => void,
 ): { findings: ScreeningFinding[]; evaluations: ScreeningDetectorEvaluation[] } {
   const findings: ScreeningFinding[] = [];
   const evaluations: ScreeningDetectorEvaluation[] = [];
@@ -667,6 +668,12 @@ function evaluateDetectors(
   const cohortRms = median(refs.map((measurement) => measurement.rms));
   const cohortPeak = median(refs.map((measurement) => measurement.peakToPeak));
   const pairs = input.comparisonPairs?.length ? input.comparisonPairs : inferPairs(eeg);
+  const evaluationSteps = DETECTORS.length + 1;
+  let completedSteps = 0;
+  const reportDetectorProgress = () => {
+    completedSteps += 1;
+    onProgress?.(completedSteps / evaluationSteps);
+  };
   const positive = (detector: ScreeningDetector, channels: readonly ScreeningChannelMeasurement[], context: number | null, evidence: ScreeningFeatureEvidence[], confidence: number, artifactProbability: number, summary: string, limitations: string[] = []): void => {
     const thresholdList = detectorThresholds(detector);
     const finding = addFinding(findings, detector, detector.replace(/-/g, " "), summary, channels, context, evidence, thresholdList, confidence, artifactProbability, limitations);
@@ -676,6 +683,7 @@ function evaluateDetectors(
   const evaluate = (detector: ScreeningDetector, hit: boolean, evaluatedChannelCount: number, limitations: string[] = []): void => {
     const status: ScreeningStatus = evaluatedChannelCount === 0 ? "insufficient-data" : hit ? "screen-positive" : "not-detected";
     evaluations.push({ detector, status, candidateFindingIds: [], evaluatedChannelCount, thresholds: detectorThresholds(detector), limitations: [...LIMITATIONS, ...limitations] });
+    reportDetectorProgress();
   };
 
   const slowingChannels = eeg.filter((channel) => {
@@ -813,6 +821,7 @@ function evaluateDetectors(
   }
 
   const temporal = detectTemporalPhenomena(input.channels.map(normalizeChannel));
+  reportDetectorProgress();
   const recordingOffset = input.startTimeSeconds ?? 0;
   for (const evaluation of temporal.evaluations) {
     evaluations.push({
@@ -902,8 +911,11 @@ function cancelled(options: ScreeningOptions): boolean {
   return options.signal?.aborted === true || options.isCancelled?.() === true;
 }
 
-function emitProgress(options: ScreeningOptions, progress: ScreeningProgress): void {
-  options.onProgress?.({ ...progress, fraction: progress.total ? clamp(progress.completed / progress.total, 0, 1) : 1 });
+function emitProgress(options: ScreeningOptions, progress: ScreeningProgress, fractionOverride?: number): void {
+  options.onProgress?.({
+    ...progress,
+    fraction: fractionOverride ?? (progress.total ? clamp(progress.completed / progress.total, 0, 1) : 1),
+  });
 }
 
 function cancelledResult(measurements: ScreeningChannelMeasurement[], input: ScreeningInput): DeterministicScreeningResult {
@@ -946,19 +958,33 @@ export function runDeterministicScreeningSync(input: ScreeningInput, options: Sc
           if (start >= maxStart && end === count) break;
         }
         completed += 1;
-        emitProgress(options, { phase: "measurements", completed, total, fraction: 0, channelId: channel.id, contextWindowSeconds });
+        emitProgress(
+          options,
+          { phase: "measurements", completed, total, fraction: 0, channelId: channel.id, contextWindowSeconds },
+          total ? (completed / total) * 0.75 : 0.75,
+        );
       }
     } else {
       completed += windows.length;
-      emitProgress(options, { phase: "measurements", completed, total, fraction: 0, channelId: channel.id });
+      emitProgress(
+        options,
+        { phase: "measurements", completed, total, fraction: 0, channelId: channel.id },
+        total ? (completed / total) * 0.75 : 0.75,
+      );
     }
     const first = channelWindows[0];
     measurements.push({ provenance: provenance(channel, first?.polarity ?? "unknown"), windows: channelWindows, representative: representative(channelWindows) });
   }
   if (cancelled(options)) return cancelledResult(measurements, input);
-  emitProgress(options, { phase: "detectors", completed: total, total, fraction: 1 });
-  const result = evaluateDetectors(measurements, input, lineFrequencies);
-  emitProgress(options, { phase: "complete", completed: total, total, fraction: 1 });
+  emitProgress(options, { phase: "detectors", completed: total, total, fraction: 0 }, 0.75);
+  const result = evaluateDetectors(measurements, input, lineFrequencies, (fraction) => {
+    emitProgress(
+      options,
+      { phase: "detectors", completed: total, total, fraction: 0 },
+      0.75 + fraction * 0.24,
+    );
+  });
+  emitProgress(options, { phase: "complete", completed: total, total, fraction: 1 }, 1);
   return {
     status: "complete",
     detectorVersion: DETERMINISTIC_SCREENING_VERSION,
