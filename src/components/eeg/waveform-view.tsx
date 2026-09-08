@@ -2276,6 +2276,12 @@ function drawDsa(
   const mid = plotH / 2;
   for (let x = 0; x < plotW; x++) {
     const ti = Math.min(frame.nTime - 1, Math.floor((x / plotW) * frame.nTime));
+    let leftPeak = 1e-20;
+    let rightPeak = 1e-20;
+    for (let fi = 1; fi < frame.nFreq; fi++) {
+      leftPeak = Math.max(leftPeak, frame.l[ti * frame.nFreq + fi] ?? 0);
+      rightPeak = Math.max(rightPeak, frame.r[ti * frame.nFreq + fi] ?? 0);
+    }
     for (let y = 0; y < plotH; y++) {
       let src: Float32Array;
       let fBin: number;
@@ -2290,7 +2296,15 @@ function drawDsa(
       }
       const p = src[ti * frame.nFreq + fBin] ?? 0;
       const hz = (fBin * frame.fMax) / Math.max(1, frame.nFreq - 1);
-      const [r, g, b] = dsaBandRgb(dsaUnit(p, frame.dbMin, frame.dbMax), hz, theme);
+      const peak = y < mid ? leftPeak : rightPeak;
+      const relativeDb = 10 * Math.log10(Math.max(1e-20, p) / peak);
+      const relativePower = clamp(1 + relativeDb / 30, 0, 1);
+      const [r, g, b] = dsaBandRgb(
+        dsaUnit(p, frame.dbMin, frame.dbMax),
+        hz,
+        theme,
+        relativePower,
+      );
       const i = (y * plotW + x) * 4;
       data[i] = r;
       data[i + 1] = g;

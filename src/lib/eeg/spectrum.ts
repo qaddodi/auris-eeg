@@ -508,6 +508,7 @@ export function dsaBandRgb(
   u: number,
   hz: number,
   theme: "dark" | "light" = "dark",
+  relativePower = 1,
 ): [number, number, number] {
   const base = hexRgb(BAND_COLORS[bandFromHz(hz)]);
   const background: [number, number, number] = theme === "dark" ? [7, 8, 10] : [248, 250, 251];
@@ -515,7 +516,8 @@ export function dsaBandRgb(
   // Keep the low-power floor close to the canvas background so quiet rows do
   // not falsely read as strong delta/theta activity.
   const contrast = Math.max(0, (normalized - 0.12) / 0.88);
-  const strength = Math.pow(contrast, 0.85);
+  const relative = Math.max(0, Math.min(1, relativePower));
+  const strength = Math.pow(contrast * Math.pow(relative, 0.8), 0.85);
   const colored = mixRgb(background, base, strength);
   return theme === "dark" ? mixRgb(colored, [255, 255, 255], 0.08 * strength) : colored;
 }
