@@ -440,7 +440,11 @@ function detectMuscleIntervals(tracks: readonly ProcessedTrack[]): ArtifactInter
       }
       const zeroRate = crossings / (values.length / track.sampleRate);
       const jumpRatio = jump / Math.max(1, values.length - 1) / scale;
-      if (zeroRate < 30 || jumpRatio < 0.55) continue;
+      // Some sampled periodic signals hit zero exactly, making the crossing
+      // count sparse even when the high-frequency jump evidence is strong.
+      // Require either robust crossing evidence or the independent jump-rate
+      // evidence so those signals still receive a muscle review marker.
+      if (zeroRate < 30 && jumpRatio < 0.75) continue;
       const span = boundedSpan(start / track.sampleRate, (start + window) / track.sampleRate, 0.4, track.samples.length / track.sampleRate);
       output.push({
         type: "muscle",

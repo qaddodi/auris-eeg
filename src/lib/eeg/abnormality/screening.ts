@@ -1185,9 +1185,7 @@ export function detectDeterministicAnnotations(
       confidence: finding.confidence,
     };
   });
-  const fallbackQualityAnnotations = fallbackFlatAnnotations(channels, duration).filter((annotation) =>
-    !findingAnnotations.some((finding) => finding.trackId === annotation.trackId && finding.text.includes("Flat or disconnected")),
-  );
+  const fallbackQualityAnnotations = fallbackFlatAnnotations(channels, duration);
   const normalizedChannels = channels.map(normalizeChannel).map((channel) => ({
     id: channel.id,
     label: channel.label,
@@ -1199,7 +1197,7 @@ export function detectDeterministicAnnotations(
   const patternAnnotations = detectReviewCandidates(normalizedChannels);
   const artifacts = patternAnnotations.filter((annotation) => annotation.type === "blink" || annotation.type === "muscle" || annotation.type === "qrs");
   const combined = vetoArtifactOverlaps(
-    [...patternAnnotations, ...findingAnnotations, ...fallbackQualityAnnotations],
+    [...patternAnnotations, ...fallbackQualityAnnotations, ...findingAnnotations],
     artifacts,
   );
   const seen = new Set<string>();
