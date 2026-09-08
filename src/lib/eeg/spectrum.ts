@@ -204,10 +204,25 @@ export function spectrogram(
   let windowEnergy = 0;
   for (let i = 0; i < win; i++) windowEnergy += hann(win, i) ** 2;
   const normalization = Math.max(1e-12, fs * windowEnergy);
+  const center = (win - 1) / 2;
+  let detrendDenominator = 0;
+  for (let i = 0; i < win; i++) detrendDenominator += (i - center) ** 2;
   for (let t = 0; t < nTime; t++) {
     const i0 = t * hop;
+    let mean = 0;
+    for (let i = 0; i < win; i++) mean += x[i0 + i] ?? 0;
+    mean /= win;
+    let slopeNumerator = 0;
     for (let i = 0; i < win; i++) {
-      frame[i] = (x[i0 + i] ?? 0) * hann(win, i);
+      slopeNumerator += (i - center) * ((x[i0 + i] ?? 0) - mean);
+    }
+    const slope = slopeNumerator / Math.max(1, detrendDenominator);
+    for (let i = 0; i < win; i++) {
+      // Remove the local baseline and linear drift before the FFT. Without
+      // this, DC offsets and slow electrode drift can make delta/theta look
+      // dominant even when the visible oscillation is elsewhere.
+      const detrended = (x[i0 + i] ?? 0) - mean - slope * (i - center);
+      frame[i] = detrended * hann(win, i);
     }
     const mag = fftPower(frame);
     for (let f = 0; f < nFreq; f++) {
@@ -466,11 +481,13 @@ export function dsaBandRgb(
 ): [number, number, number] {
   const base = hexRgb(BAND_COLORS[bandFromHz(hz)]);
   const background: [number, number, number] = theme === "dark" ? [7, 8, 10] : [248, 250, 251];
-  // Use a perceptual lift so low-power bins stay visible without flattening
-  // the distribution. Hue identifies the band; brightness identifies PSD.
-  const strength = 0.08 + 0.92 * Math.pow(Math.max(0, Math.min(1, u)), 0.65);
+  // Suppress the low-power floor so every frequency row does not look like a
+  // real band. Hue identifies the band; brightness identifies meaningful PSD.
+  const normalized = Math.max(0, Math.min(1, u));
+  const contrast = Math.max(0, (normalized - 0.12) / 0.88);
+  const strength = Math.pow(contrast, 0.85);
   const colored = mixRgb(background, base, strength);
-  return theme === "dark" ? mixRgb(colored, [255, 255, 255], 0.08 * u) : colored;
+  return theme === "dark" ? mixRgb(colored, [255, 255, 255], 0.08 * strength) : colored;
 }
 
 /** Neutral brightness ramp for the DSA's dB intensity key. */
