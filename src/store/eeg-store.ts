@@ -535,6 +535,15 @@ export const useEegStore = create<AppState>((set, get) => {
       planDisplayWindow(view.start, view.duration, total, filters),
       filters,
     );
+    // The DSA is a whole-record view, but it must use the same display filter
+    // settings as the waveform currently being reviewed. Keep this separate
+    // from the analysis/audio branch so changing LFF/HFF/notch or cleanup
+    // controls is visible in the spectrogram without changing sonification.
+    const dsaSource = buildDisplayWindow(
+      raw,
+      { start: 0, duration: total, visibleStart: 0, visibleDuration: total },
+      filters,
+    );
     // EKG remains available as a trace and manual annotation target, but its
     // heartbeat morphology is intentionally not surfaced as an auto suggestion.
     const auto: Annotation[] = [];
@@ -566,7 +575,7 @@ export const useEegStore = create<AppState>((set, get) => {
       viewStart: view.start,
       viewDuration: view.duration,
       annotations: [...keepUser, ...fromFile, ...auto],
-      dsa: buildDsa(analysis.tracks, analysis.duration),
+      dsa: buildDsa(dsaSource.tracks, dsaSource.duration),
     });
     if (get().showAuto) refreshDeterministicAnnotations(raw, derivations, recording);
     pushEngine();
@@ -708,12 +717,28 @@ export const useEegStore = create<AppState>((set, get) => {
     },
 
     setFilters: (p) => {
+      const { rawSegment } = get();
       const next = { ...get().filters, ...p };
       try {
-        // Validate and render only the prefetched display window. The immutable
-        // whole-record analysis/audio branch is intentionally untouched.
+        // Validate and render the prefetched display window. The immutable
+        // whole-record analysis/audio branch is intentionally untouched, while
+        // the DSA follows the same filter settings across the full recording.
         refreshDisplayWindow(get().viewStart, get().viewDuration, true, next);
-        set({ filters: next });
+        if (rawSegment) {
+          const dsaSource = buildDisplayWindow(
+            rawSegment,
+            {
+              start: 0,
+              duration: rawSegment.duration,
+              visibleStart: 0,
+              visibleDuration: rawSegment.duration,
+            },
+            next,
+          );
+          set({ filters: next, dsa: buildDsa(dsaSource.tracks, dsaSource.duration) });
+        } else {
+          set({ filters: next });
+        }
       } catch (err) {
         set({ error: err instanceof Error ? err.message : "Display filter could not be applied." });
       }

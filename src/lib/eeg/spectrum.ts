@@ -515,9 +515,9 @@ export function dsaBandRgb(
   const normalized = Math.max(0, Math.min(1, u));
   // Keep the low-power floor close to the canvas background so quiet rows do
   // not falsely read as strong delta/theta activity.
-  const contrast = Math.max(0, (normalized - 0.12) / 0.88);
+  const contrast = Math.max(0, (normalized - 0.2) / 0.8);
   const relative = Math.max(0, Math.min(1, relativePower));
-  const strength = Math.pow(contrast * Math.pow(relative, 0.8), 0.85);
+  const strength = Math.pow(contrast * Math.pow(relative, 1.15), 1.05);
   const colored = mixRgb(background, base, strength);
   return theme === "dark" ? mixRgb(colored, [255, 255, 255], 0.08 * strength) : colored;
 }

@@ -38,10 +38,12 @@ import {
   BAND_COLORS,
   BAND_LABELS,
   bandFromHz,
+  bandPowersFromColumn,
   dsaBandRgb,
   dsaRgb,
   dsaUnit,
   freqWindow,
+  type BandPowers,
   type DsaFrame,
 } from "@/lib/eeg/spectrum";
 import { eegNow, useEegStore } from "@/store/eeg-store";
@@ -2251,6 +2253,36 @@ function drawOverviewOverlay(
   ctx.stroke();
 }
 
+/**
+ * Gate DSA color by band evidence, not just the strongest individual FFT bin.
+ * Raw EEG spectra have a natural 1/f slope, which can make quiet delta/theta
+ * power look stronger than it is. These gentle compensation factors flatten
+ * that display bias before comparing bands; the underlying PSD is unchanged.
+ */
+function dsaBandPresence(powers: BandPowers, hz: number): number {
+  const values = [
+    powers.delta * 0.55,
+    powers.theta * 0.8,
+    powers.alpha,
+    powers.beta * 1.35,
+    powers.gamma * 1.8,
+  ];
+  const total = values.reduce((sum, value) => sum + value, 0);
+  if (total <= 1e-12) return 0;
+  const band = bandFromHz(hz);
+  const index =
+    band === "delta" ? 0 : band === "theta" ? 1 : band === "alpha" ? 2 : band === "beta" ? 3 : 4;
+  const value = values[index]!;
+  const peak = Math.max(...values);
+  const share = value / total;
+  const dominance = value / Math.max(1e-12, peak);
+  // A band below roughly 4% of the corrected spectrum should sit close to the
+  // DSA background. Stronger bands become visible progressively rather than
+  // appearing as full-color rows from a small amount of residual noise.
+  const shareGate = clamp((share - 0.04) / 0.16, 0, 1);
+  return clamp(Math.pow(shareGate * (0.35 + 0.65 * dominance), 1.1), 0, 1);
+}
+
 function drawDsa(
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
@@ -2276,6 +2308,16 @@ function drawDsa(
   const mid = plotH / 2;
   for (let x = 0; x < plotW; x++) {
     const ti = Math.min(frame.nTime - 1, Math.floor((x / plotW) * frame.nTime));
+    const leftStart = ti * frame.nFreq;
+    const rightStart = ti * frame.nFreq;
+    const leftPowers = bandPowersFromColumn(
+      frame.l.subarray(leftStart, leftStart + frame.nFreq),
+      frame.fMax,
+    );
+    const rightPowers = bandPowersFromColumn(
+      frame.r.subarray(rightStart, rightStart + frame.nFreq),
+      frame.fMax,
+    );
     let leftPeak = 1e-20;
     let rightPeak = 1e-20;
     for (let fi = 1; fi < frame.nFreq; fi++) {
@@ -2299,11 +2341,12 @@ function drawDsa(
       const peak = y < mid ? leftPeak : rightPeak;
       const relativeDb = 10 * Math.log10(Math.max(1e-20, p) / peak);
       const relativePower = clamp(1 + relativeDb / 30, 0, 1);
+      const bandPresence = dsaBandPresence(y < mid ? leftPowers : rightPowers, hz);
       const [r, g, b] = dsaBandRgb(
         dsaUnit(p, frame.dbMin, frame.dbMax),
         hz,
         theme,
-        relativePower,
+        Math.pow(relativePower, 1.15) * bandPresence,
       );
       const i = (y * plotW + x) * 4;
       data[i] = r;
