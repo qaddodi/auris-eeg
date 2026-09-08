@@ -452,55 +452,34 @@ export function peakBand(p: BandPowers): BandName {
   return entries[0]![0];
 }
 
-function hexRgb(hex: string): [number, number, number] {
-  return [
-    Number.parseInt(hex.slice(1, 3), 16),
-    Number.parseInt(hex.slice(3, 5), 16),
-    Number.parseInt(hex.slice(5, 7), 16),
-  ];
-}
-
-function mixRgb(
-  a: [number, number, number],
-  b: [number, number, number],
-  amount: number,
-): [number, number, number] {
-  const t = Math.max(0, Math.min(1, amount));
-  return [
-    a[0] + (b[0] - a[0]) * t,
-    a[1] + (b[1] - a[1]) * t,
-    a[2] + (b[2] - a[2]) * t,
-  ];
-}
-
-/** Map PSD power to a frequency-band color, preserving the trace palette. */
-export function dsaBandRgb(
-  u: number,
-  hz: number,
-  theme: "dark" | "light" = "dark",
-): [number, number, number] {
-  const base = hexRgb(BAND_COLORS[bandFromHz(hz)]);
-  const background: [number, number, number] = theme === "dark" ? [7, 8, 10] : [248, 250, 251];
-  // Suppress the low-power floor so every frequency row does not look like a
-  // real band. Hue identifies the band; brightness identifies meaningful PSD.
-  const normalized = Math.max(0, Math.min(1, u));
-  const contrast = Math.max(0, (normalized - 0.12) / 0.88);
-  const strength = Math.pow(contrast, 0.85);
-  const colored = mixRgb(background, base, strength);
-  return theme === "dark" ? mixRgb(colored, [255, 255, 255], 0.08 * strength) : colored;
-}
-
-/** Neutral brightness ramp for the DSA's dB intensity key. */
-export function dsaPowerRgb(u: number, theme: "dark" | "light" = "dark"): [number, number, number] {
-  const x = Math.max(0, Math.min(1, u));
-  const low: [number, number, number] = theme === "dark" ? [7, 8, 10] : [248, 250, 251];
-  const high: [number, number, number] = theme === "dark" ? [235, 240, 245] : [34, 47, 57];
-  return mixRgb(low, high, Math.pow(x, 0.65));
-}
-
-/** Backward-compatible alias for callers that need a generic power color. */
+/** Theme-aware, continuous DSA power ramp. Frequency is read from the axis;
+ * this color scale intentionally does not segment the spectrum into bands. */
 export function dsaRgb(u: number, theme: "dark" | "light" = "dark"): [number, number, number] {
-  return dsaPowerRgb(u, theme);
+  const x = Math.max(0, Math.min(1, u));
+  const stops: [number, number, number, number][] = theme === "dark"
+    ? [
+      [0, 22, 36, 50],
+      [0.25, 28, 78, 102],
+      [0.5, 35, 130, 143],
+      [0.75, 84, 193, 177],
+      [1, 246, 202, 99],
+    ]
+    : [
+      [0, 238, 245, 247],
+      [0.25, 166, 211, 217],
+      [0.5, 84, 166, 180],
+      [0.75, 28, 108, 132],
+      [1, 196, 91, 37],
+    ];
+  for (let i = 1; i < stops.length; i++) {
+    const a = stops[i - 1]!;
+    const b = stops[i]!;
+    if (x <= b[0]) {
+      const t = (x - a[0]) / Math.max(1e-6, b[0] - a[0]);
+      return [a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t];
+    }
+  }
+  return [253, 231, 37];
 }
 
 export function dsaDb(power: number): number {
