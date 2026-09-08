@@ -1055,6 +1055,57 @@ function annotationTypeForFinding(finding: ScreeningFinding): MorphologyType {
 }
 
 /**
+ * Preserve a channel-quality marker when a completely flat input cannot
+ * produce a representative spectral window. This uses the same bounded
+ * flatline/continuity evidence as the screening detector and is only a
+ * mapping fallback, not a second quality detector.
+ */
+function fallbackFlatAnnotations(
+  channels: readonly ScreeningInputChannel[],
+  durationSeconds: number,
+): Annotation[] {
+  return channels.flatMap((channel) => {
+    const sampleRate = Number(channel.sampleRate);
+    const values = Array.from(channel.samples, Number);
+    if (sampleRate <= 0 || values.length < 8) return [];
+    const finiteValues = values.filter((value) => Number.isFinite(value));
+    const finiteFraction = finiteValues.length / values.length;
+    if (finiteValues.length < 8) return [];
+    const center = median(finiteValues);
+    const scale = Math.max(1e-12, median(finiteValues.map((value) => Math.abs(value - center))) * 1.4826);
+    const tolerance = Math.max(scale * 0.02, 1e-9);
+    let longest = 1;
+    let current = 1;
+    for (let index = 1; index < values.length; index += 1) {
+      if (Number.isFinite(values[index - 1]) && Number.isFinite(values[index]) && Math.abs(values[index] - values[index - 1]) <= tolerance) {
+        current += 1;
+        longest = Math.max(longest, current);
+      } else {
+        current = 1;
+      }
+    }
+    const flatlineRatio = longest / values.length;
+    let continuousPairs = 0;
+    for (let index = 1; index < values.length; index += 1) {
+      if (Number.isFinite(values[index - 1]) && Number.isFinite(values[index]) && Math.abs(values[index] - values[index - 1]) <= scale * 8) continuousPairs += 1;
+    }
+    const continuity = finiteFraction * safeRatio(continuousPairs, Math.max(1, values.length - 1));
+    if (finiteFraction >= 0.98 && flatlineRatio < 0.95 && continuity >= 0.5) return [];
+    const end = Math.min(Math.max(0, durationSeconds), 0.4);
+    return [{
+      id: `screen-flat-disconnected-electrode-${fnv1a(`${channel.id}|${Math.round(durationSeconds * 1000)}`)}`,
+      start: 0,
+      end,
+      trackId: channel.id,
+      type: "comment",
+      text: `Flat or disconnected-channel screen for ${channel.label} · flatline ratio ${flatlineRatio.toFixed(2)} · continuity ${continuity.toFixed(2)} · finite fraction ${finiteFraction.toFixed(2)} · expert review required`,
+      source: "auto",
+      confidence: 0.7,
+    } satisfies Annotation];
+  });
+}
+
+/**
  * UI adapter for the existing review-marker surface. Event detectors retain
  * their measured interval. Record-level screens become short rail markers at
  * time zero so they are visible in the event list without painting a
@@ -1134,6 +1185,9 @@ export function detectDeterministicAnnotations(
       confidence: finding.confidence,
     };
   });
+  const fallbackQualityAnnotations = fallbackFlatAnnotations(channels, duration).filter((annotation) =>
+    !findingAnnotations.some((finding) => finding.trackId === annotation.trackId && finding.text.includes("Flat or disconnected")),
+  );
   const normalizedChannels = channels.map(normalizeChannel).map((channel) => ({
     id: channel.id,
     label: channel.label,
@@ -1144,7 +1198,10 @@ export function detectDeterministicAnnotations(
   }));
   const patternAnnotations = detectReviewCandidates(normalizedChannels);
   const artifacts = patternAnnotations.filter((annotation) => annotation.type === "blink" || annotation.type === "muscle" || annotation.type === "qrs");
-  const combined = vetoArtifactOverlaps([...patternAnnotations, ...findingAnnotations], artifacts);
+  const combined = vetoArtifactOverlaps(
+    [...patternAnnotations, ...findingAnnotations, ...fallbackQualityAnnotations],
+    artifacts,
+  );
   const seen = new Set<string>();
   const output = combined
     .filter((annotation) => {

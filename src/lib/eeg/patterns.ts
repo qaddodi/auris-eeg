@@ -428,8 +428,14 @@ function detectMuscleIntervals(tracks: readonly ProcessedTrack[]): ArtifactInter
       const scale = Math.max(1e-9, median(values.map((value) => Math.abs(value - center))) * 1.4826);
       let crossings = 0;
       let jump = 0;
+      let previousSign = 0;
       for (let index = 1; index < values.length; index += 1) {
-        if ((values[index - 1]! - center) * (values[index]! - center) < 0) crossings += 1;
+        const deviation = values[index]! - center;
+        const sign = deviation > 0 ? 1 : deviation < 0 ? -1 : 0;
+        if (sign !== 0) {
+          if (previousSign !== 0 && sign !== previousSign) crossings += 1;
+          previousSign = sign;
+        }
         jump += Math.abs(values[index]! - values[index - 1]!);
       }
       const zeroRate = crossings / (values.length / track.sampleRate);
