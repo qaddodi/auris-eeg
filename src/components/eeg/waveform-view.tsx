@@ -37,14 +37,12 @@ import {
 import {
   BAND_COLORS,
   BAND_LABELS,
-  DSA_BANDS,
   bandFromHz,
-  dsaBandBlendRgb,
+  dsaBandRgb,
   dsaRgb,
   dsaUnit,
   freqWindow,
   type DsaFrame,
-  type DsaRow,
 } from "@/lib/eeg/spectrum";
 import { eegNow, useEegStore } from "@/store/eeg-store";
 import type { ResolvedTheme } from "./theme";
@@ -58,7 +56,7 @@ const RULER = 18;
 // Keep the full-record navigator deliberately compact: it is a locator, not a
 // second EEG page. Related derivations are condensed into montage-group lanes.
 const OVERVIEW_H = 76;
-const DSA_H = 168;
+const DSA_H = 108;
 const DSA_LEFT = 38;
 const DSA_RIGHT = 58;
 const DSA_TOP = 15;
@@ -1567,7 +1565,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
         <canvas ref={dsaRef} className="absolute inset-0 size-full" />
         <canvas ref={dsaOverlayRef} className="pointer-events-none absolute inset-0 size-full" />
         <div className="pointer-events-none absolute left-2 top-1 text-[0.625rem] font-medium uppercase tracking-wider text-subtle">
-          DSA · band power
+          DSA · PSD (dB)
         </div>
         <div
           className="pointer-events-none absolute left-[6.5rem] right-[4rem] top-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-sm bg-bg/80 px-1.5 py-0.5 text-[0.5625rem] font-medium shadow-border"
@@ -2266,7 +2264,7 @@ function drawDsa(
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = palette.dsaBg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (!frame || frame.nTime < 1 || frame.rows.length === 0) {
+  if (!frame || frame.nTime < 1 || frame.nFreq < 2) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     return;
   }
@@ -2275,61 +2273,73 @@ function drawDsa(
   const plotH = Math.max(1, Math.floor((cssH - DSA_TOP - DSA_BOTTOM) * dpr));
   const img = ctx.createImageData(plotW, plotH);
   const data = img.data;
-  const rowHeight = plotH / frame.rows.length;
+  const mid = plotH / 2;
   for (let x = 0; x < plotW; x++) {
     const ti = Math.min(frame.nTime - 1, Math.floor((x / plotW) * frame.nTime));
-    for (let rowIndex = 0; rowIndex < frame.rows.length; rowIndex++) {
-      const row = frame.rows[rowIndex]!;
-      const offset = ti * DSA_BANDS.length;
-      const unit = dsaUnit(row.total[ti] ?? 0, frame.dbMin, frame.dbMax);
-      const [r, g, b] = dsaBandBlendRgb(row.bands, unit, theme, offset);
-      const y0 = Math.floor(rowIndex * rowHeight);
-      const y1 = Math.min(plotH, Math.ceil((rowIndex + 1) * rowHeight));
-      for (let y = y0; y < y1; y++) {
-        const i = (y * plotW + x) * 4;
-        data[i] = r;
-        data[i + 1] = g;
-        data[i + 2] = b;
-        data[i + 3] = 255;
+    let leftPeak = 1e-20;
+    let rightPeak = 1e-20;
+    for (let fi = 1; fi < frame.nFreq; fi++) {
+      leftPeak = Math.max(leftPeak, frame.l[ti * frame.nFreq + fi] ?? 0);
+      rightPeak = Math.max(rightPeak, frame.r[ti * frame.nFreq + fi] ?? 0);
+    }
+    for (let y = 0; y < plotH; y++) {
+      let src: Float32Array;
+      let fBin: number;
+      if (y < mid) {
+        src = frame.l;
+        const u = 1 - y / Math.max(1, mid - 1);
+        fBin = Math.min(frame.nFreq - 1, Math.floor(u * (frame.nFreq - 1)));
+      } else {
+        src = frame.r;
+        const u = (y - mid) / Math.max(1, plotH - mid - 1);
+        fBin = Math.min(frame.nFreq - 1, Math.floor(u * (frame.nFreq - 1)));
       }
+      const p = src[ti * frame.nFreq + fBin] ?? 0;
+      const hz = (fBin * frame.fMax) / Math.max(1, frame.nFreq - 1);
+      const peak = y < mid ? leftPeak : rightPeak;
+      const relativeDb = 10 * Math.log10(Math.max(1e-20, p) / peak);
+      const relativePower = clamp(1 + relativeDb / 30, 0, 1);
+      const [r, g, b] = dsaBandRgb(
+        dsaUnit(p, frame.dbMin, frame.dbMax),
+        hz,
+        theme,
+        relativePower,
+      );
+      const i = (y * plotW + x) * 4;
+      data[i] = r;
+      data[i + 1] = g;
+      data[i + 2] = b;
+      data[i + 3] = 255;
     }
   }
   ctx.putImageData(img, Math.round(DSA_LEFT * dpr), Math.round(DSA_TOP * dpr));
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.strokeStyle = palette.gridStrong;
   ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(DSA_LEFT, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) / 2);
+  ctx.lineTo(cssW - DSA_RIGHT, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) / 2);
+  ctx.stroke();
   ctx.fillStyle = palette.muted;
   ctx.font = "500 9px 'SF Mono', 'Cascadia Mono', ui-monospace, monospace";
   ctx.textBaseline = "middle";
-  ctx.textAlign = "left";
-  let previousHemisphere: DsaRow["hemisphere"] | null = null;
-  for (let rowIndex = 0; rowIndex < frame.rows.length; rowIndex++) {
-    const row = frame.rows[rowIndex]!;
-    const y = DSA_TOP + ((rowIndex + 1) / frame.rows.length) * (cssH - DSA_TOP - DSA_BOTTOM);
-    const yTop = DSA_TOP + (rowIndex / frame.rows.length) * (cssH - DSA_TOP - DSA_BOTTOM);
-    const rowHeightCss = (cssH - DSA_TOP - DSA_BOTTOM) / frame.rows.length;
-    ctx.strokeStyle = row.hemisphere !== previousHemisphere ? palette.gridStrong : palette.grid;
-    ctx.lineWidth = row.hemisphere !== previousHemisphere ? 1.5 : 1;
-    ctx.beginPath();
-    ctx.moveTo(DSA_LEFT, yTop + 0.5);
-    ctx.lineTo(cssW - DSA_RIGHT, yTop + 0.5);
-    ctx.stroke();
-    if (rowHeightCss >= 7) {
-      const side = row.laterality === "right" ? "R" : row.laterality === "left" ? "L" : "M";
-      ctx.fillText(`${side} ${row.label}`, 5, yTop + rowHeightCss / 2);
-    }
-    if (rowIndex === frame.rows.length - 1) {
-      ctx.strokeStyle = palette.gridStrong;
-      ctx.beginPath();
-      ctx.moveTo(DSA_LEFT, y + 0.5);
-      ctx.lineTo(cssW - DSA_RIGHT, y + 0.5);
-      ctx.stroke();
-    }
-    previousHemisphere = row.hemisphere;
-  }
+  ctx.fillText("L", 7, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.25);
+  ctx.fillText("0", 7, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.5);
+  ctx.fillText("R", 7, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.75);
   ctx.textAlign = "right";
-  ctx.fillText("R / midline", DSA_LEFT - 5, DSA_TOP + 7);
-  ctx.fillText("L / midline", DSA_LEFT - 5, cssH - DSA_BOTTOM - 5);
+  ctx.fillText(`${frame.fMax.toFixed(0)} Hz`, DSA_LEFT - 5, DSA_TOP + 4);
+  ctx.fillText(
+    `${(frame.fMax / 2).toFixed(0)} Hz`,
+    DSA_LEFT - 5,
+    DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.25,
+  );
+  ctx.fillText("0 Hz", DSA_LEFT - 5, DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.5);
+  ctx.fillText(
+    `${(frame.fMax / 2).toFixed(0)} Hz`,
+    DSA_LEFT - 5,
+    DSA_TOP + (cssH - DSA_TOP - DSA_BOTTOM) * 0.75,
+  );
+  ctx.fillText(`${frame.fMax.toFixed(0)} Hz`, DSA_LEFT - 5, cssH - DSA_BOTTOM - 3);
   ctx.textAlign = "left";
   const legendX = cssW - DSA_RIGHT + 9;
   const legendY = DSA_TOP + 2;

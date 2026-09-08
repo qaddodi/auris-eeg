@@ -16,14 +16,11 @@ export const BAND_LABELS: { id: BandName; glyph: string; range: string }[] = [
   { id: "gamma", glyph: "γ", range: ">30" },
 ];
 
-export const DSA_BANDS: readonly BandName[] = ["delta", "theta", "alpha", "beta", "gamma"];
-
 export type BandName = keyof typeof BAND_COLORS;
 
 export interface DsaFrame {
   l: Float32Array;
   r: Float32Array;
-  rows: DsaRow[];
   nTime: number;
   nFreq: number;
   fMin: number;
@@ -37,17 +34,6 @@ export interface DsaFrame {
   sampleRate: number;
   dbMin: number;
   dbMax: number;
-}
-
-export interface DsaRow {
-  id: string;
-  label: string;
-  laterality: "left" | "right" | "midline" | "unknown";
-  hemisphere: "top" | "bottom";
-  /** Relative delta/theta/alpha/beta/gamma power for each time bin. */
-  bands: Float32Array;
-  /** Total band power for each time bin, before relative normalization. */
-  total: Float32Array;
 }
 
 export interface BandPowers {
@@ -307,13 +293,11 @@ function dbOfPower(power: number): number {
   return 10 * Math.log10(Math.max(1e-20, power));
 }
 
-function dbRangeOf(...arrays: Float32Array[]): { min: number; max: number } {
-  const totalLength = arrays.reduce((total, array) => total + array.length, 0);
-  const step = Math.max(1, Math.floor(totalLength / 4000));
+function dbRangeOf(a: Float32Array, b: Float32Array): { min: number; max: number } {
+  const step = Math.max(1, Math.floor((a.length + b.length) / 4000));
   const samples: number[] = [];
-  for (const array of arrays) {
-    for (let i = 0; i < array.length; i += step) samples.push(dbOfPower(array[i]!));
-  }
+  for (let i = 0; i < a.length; i += step) samples.push(dbOfPower(a[i]!));
+  for (let i = 0; i < b.length; i += step) samples.push(dbOfPower(b[i]!));
   if (samples.length === 0) return { min: -80, max: -20 };
   samples.sort((x, y) => x - y);
   const max = samples[Math.floor(samples.length * 0.98)] ?? -20;
@@ -343,34 +327,6 @@ function remapSpec(
   return out;
 }
 
-function bandPowerRows(
-  spec: Float32Array,
-  nTime: number,
-  nFreq: number,
-  fMax: number,
-): { bands: Float32Array; total: Float32Array } {
-  const bands = new Float32Array(nTime * DSA_BANDS.length);
-  const total = new Float32Array(nTime);
-  const hzPerBin = fMax / Math.max(1, nFreq - 1);
-  for (let ti = 0; ti < nTime; ti++) {
-    const offset = ti * nFreq;
-    const bandOffset = ti * DSA_BANDS.length;
-    for (let fi = 1; fi < nFreq; fi++) {
-      const hz = fi * hzPerBin;
-      const band = DSA_BANDS.indexOf(bandFromHz(hz));
-      if (band < 0) continue;
-      const power = Math.max(0, spec[offset + fi] ?? 0);
-      bands[bandOffset + band] = (bands[bandOffset + band] ?? 0) + power;
-      total[ti] = (total[ti] ?? 0) + power;
-    }
-    const sum = Math.max(1e-20, total[ti] ?? 0);
-    for (let band = 0; band < DSA_BANDS.length; band++) {
-      bands[bandOffset + band] = (bands[bandOffset + band] ?? 0) / sum;
-    }
-  }
-  return { bands, total };
-}
-
 export function buildDsa(tracks: ProcessedTrack[], duration: number): DsaFrame | null {
   const eeg = tracks.filter((t) => t.kind === "eeg" && t.samples.length);
   if (eeg.length === 0) return null;
@@ -384,11 +340,10 @@ export function buildDsa(tracks: ProcessedTrack[], duration: number): DsaFrame |
       (_, i) => items[Math.floor((i * (items.length - 1)) / (limit - 1))]!,
     );
   };
-  const leftTracks = selectForDsa(eeg.filter((t) => t.laterality === "left"));
-  const rightTracks = selectForDsa(eeg.filter((t) => t.laterality === "right"));
-  const midlineTracks = selectForDsa(eeg.filter((t) => t.laterality === "midline"), 4);
-  const unknownTracks = selectForDsa(eeg.filter((t) => t.laterality === "unknown"), 4);
-  const dsaEeg = [...rightTracks, ...midlineTracks, ...leftTracks, ...unknownTracks];
+  const dsaEeg = [
+    ...selectForDsa(eeg.filter((t) => t.laterality === "left")),
+    ...selectForDsa(eeg.filter((t) => t.laterality === "right")),
+  ];
   const sourceTracks = dsaEeg.length > 0 ? dsaEeg : selectForDsa(eeg, 12);
   const fs = eeg[0]!.sampleRate;
   const win = Math.min(1024, Math.max(256, nextPowerOfTwo(Math.round(fs * 2))));
@@ -411,43 +366,10 @@ export function buildDsa(tracks: ProcessedTrack[], duration: number): DsaFrame |
   const nFreq = left!.nFreq;
   const leftSpec = remapSpec(left!.spec, left!.nTime, left!.nFreq, nTime, nFreq);
   const rightSpec = remapSpec(right!.spec, right!.nTime, right!.nFreq, nTime, nFreq);
-  const makeRows = (
-    items: ProcessedTrack[],
-    laterality: DsaRow["laterality"],
-    hemisphere: DsaRow["hemisphere"],
-  ): DsaRow[] => items.map((track) => {
-    const spec = remapSpec(
-      spectrogram(track.samples, track.sampleRate, win, hop, fMax),
-      Math.max(1, Math.floor(Math.max(0, track.samples.length - win) / hop) + 1),
-      Math.max(2, Math.floor((fMax * nextPowerOfTwo(win)) / track.sampleRate) + 1),
-      nTime,
-      nFreq,
-    );
-    const powers = bandPowerRows(spec, nTime, nFreq, fMax);
-    return {
-      id: `${track.id}:${hemisphere}`,
-      label: track.label,
-      laterality,
-      hemisphere,
-      bands: powers.bands,
-      total: powers.total,
-    };
-  });
-  const topRows = [
-    ...makeRows(rightTracks, "right", "top"),
-    ...makeRows(midlineTracks, "midline", "top"),
-    ...makeRows(unknownTracks, "unknown", "top"),
-  ];
-  const bottomRows = [
-    ...makeRows(midlineTracks, "midline", "bottom").map((row) => ({ ...row, id: `${row.id}:mirror` })),
-    ...makeRows(leftTracks, "left", "bottom"),
-  ];
-  const rows = [...topRows, ...bottomRows];
-  const db = dbRangeOf(leftSpec, rightSpec, ...rows.map((row) => row.total));
+  const db = dbRangeOf(leftSpec, rightSpec);
   return {
     l: leftSpec,
     r: rightSpec,
-    rows,
     nTime,
     nFreq,
     fMin: 0,
@@ -597,35 +519,6 @@ export function dsaBandRgb(
   const relative = Math.max(0, Math.min(1, relativePower));
   const strength = Math.pow(contrast * Math.pow(relative, 0.8), 0.85);
   const colored = mixRgb(background, base, strength);
-  return theme === "dark" ? mixRgb(colored, [255, 255, 255], 0.08 * strength) : colored;
-}
-
-/** Blend the band palette for a channel/time cell. Dominance controls hue;
- * total band power controls visibility against the theme background. */
-export function dsaBandBlendRgb(
-  bands: ArrayLike<number>,
-  totalUnit: number,
-  theme: "dark" | "light" = "dark",
-  offset = 0,
-): [number, number, number] {
-  const background: [number, number, number] = theme === "dark" ? [7, 8, 10] : [248, 250, 251];
-  let weight = 0;
-  const mixed: [number, number, number] = [0, 0, 0];
-  for (let index = 0; index < DSA_BANDS.length; index++) {
-    const amount = Math.max(0, bands[offset + index] ?? 0);
-    const [r, g, b] = hexRgb(BAND_COLORS[DSA_BANDS[index]!]);
-    mixed[0] += r * amount;
-    mixed[1] += g * amount;
-    mixed[2] += b * amount;
-    weight += amount;
-  }
-  if (weight <= 1e-9) return background;
-  mixed[0] /= weight;
-  mixed[1] /= weight;
-  mixed[2] /= weight;
-  const normalized = Math.max(0, Math.min(1, totalUnit));
-  const strength = Math.pow(Math.max(0, (normalized - 0.1) / 0.9), 0.78);
-  const colored = mixRgb(background, mixed, strength);
   return theme === "dark" ? mixRgb(colored, [255, 255, 255], 0.08 * strength) : colored;
 }
 
