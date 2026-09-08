@@ -96,6 +96,7 @@ export function Transport({
   const annotations = useEegStore((s) => s.annotations);
   const showAuto = useEegStore((s) => s.showAuto);
   const screeningBusy = useEegStore((s) => s.screeningBusy);
+  const screeningProgress = useEegStore((s) => s.screeningProgress);
   const setShowAuto = useEegStore((s) => s.setShowAuto);
   const showDsa = useEegStore((s) => s.showDsa);
   const setShowDsa = useEegStore((s) => s.setShowDsa);
@@ -133,6 +134,7 @@ export function Transport({
     ((soundMode === "evidence" || soundMode === "hybrid") && Boolean(evidencePreparation));
   const confirmed = annotations.filter((a) => a.source !== "auto").length;
   const suggestions = annotations.filter((a) => a.source === "auto" && a.type !== "qrs").length;
+  const screeningPercent = Math.round(Math.max(0, Math.min(1, screeningProgress ?? 0)) * 100);
   const nextMode = nextThemeMode(themeMode);
   const themeLabel = themeMode[0]!.toUpperCase() + themeMode.slice(1);
   const nextModeLabel = nextMode[0]!.toUpperCase() + nextMode.slice(1);
@@ -253,8 +255,8 @@ export function Transport({
           <Button size="sm" variant={showAnnotations ? "default" : "ghost"} className={toolClass} aria-pressed={showAnnotations} aria-label={`${showAnnotations ? "Hide" : "Show"} markers (${confirmed})`} title={`${showAnnotations ? "Hide" : "Show"} markers`} onClick={() => setShowAnnotations(!showAnnotations)}>
             {showAnnotations ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />} Markers <Count>{confirmed}</Count>
           </Button>
-          <Button size="sm" variant={showAuto ? "default" : "ghost"} className={toolClass} aria-pressed={showAuto} aria-label={screeningBusy ? "Analyzing deterministic review cues" : `${showAuto ? "Hide" : "Show"} deterministic non-diagnostic review cues (${suggestions})`} title={screeningBusy ? "Analyzing deterministic signal features" : `${showAuto ? "Hide" : "Show"} deterministic review cues`} onClick={() => setShowAuto(!showAuto)}>
-            <Lightbulb aria-hidden="true" /> {screeningBusy ? "Analyzing…" : "Review cues"} <Count>{suggestions}</Count>
+          <Button size="sm" variant={showAuto ? "default" : "ghost"} className={toolClass} aria-pressed={showAuto} aria-label={screeningBusy ? `Analyzing deterministic review cues, ${screeningPercent}% complete` : `${showAuto ? "Hide" : "Show"} deterministic non-diagnostic review cues (${suggestions})`} title={screeningBusy ? `Analyzing deterministic signal features · ${screeningPercent}%` : `${showAuto ? "Hide" : "Show"} deterministic review cues`} onClick={() => setShowAuto(!showAuto)}>
+            <Lightbulb aria-hidden="true" /> {screeningBusy ? `Analyzing ${screeningPercent}%` : "Review cues"} <Count>{suggestions}</Count>
           </Button>
           <Button size="sm" variant={showDsa ? "default" : "ghost"} className={toolClass} aria-pressed={showDsa} title={showDsa ? "Hide DSA" : "Show DSA"} onClick={() => setShowDsa(!showDsa)}>
             <Activity aria-hidden="true" /> DSA

@@ -119,6 +119,8 @@ type CanvasPalette = {
   annotationBg: string;
   annotationText: string;
   accent: string;
+  selectionFill: string;
+  selectionEdge: string;
   overlayFill: string;
   overlayStroke: string;
   navigatorShade: string;
@@ -150,6 +152,8 @@ const CANVAS_PALETTES: Record<ResolvedTheme, CanvasPalette> = {
     annotationBg: "#06080b",
     annotationText: "#ffffff",
     accent: "#7eb8c9",
+    selectionFill: "#ffffff",
+    selectionEdge: "#ffffff",
     overlayFill: "rgba(232,234,237,0.06)",
     overlayStroke: "rgba(232,234,237,0.45)",
     navigatorShade: "rgba(1,4,8,0.08)",
@@ -179,6 +183,8 @@ const CANVAS_PALETTES: Record<ResolvedTheme, CanvasPalette> = {
     annotationBg: "#ffffff",
     annotationText: "#17232c",
     accent: "#146b83",
+    selectionFill: "#07151d",
+    selectionEdge: "#07151d",
     overlayFill: "rgba(23,35,44,0.08)",
     overlayStroke: "rgba(23,35,44,0.42)",
     navigatorShade: "rgba(32,49,60,0.05)",
@@ -757,8 +763,8 @@ function drawAnnotationStartLine(
   const lineWidth = selected ? 2.5 : 1.5;
   ctx.save();
   ctx.globalAlpha = selected ? 0.95 : 0.82;
-  ctx.strokeStyle = palette.keyline;
-  ctx.lineWidth = lineWidth + 2.5;
+  ctx.strokeStyle = selected ? palette.selectionEdge : palette.keyline;
+  ctx.lineWidth = selected ? lineWidth + 5 : lineWidth + 2.5;
   ctx.setLineDash([]);
   ctx.beginPath();
   ctx.moveTo(alignedX, 0);
@@ -766,7 +772,7 @@ function drawAnnotationStartLine(
   ctx.stroke();
   ctx.globalAlpha = selected ? 1 : 0.9;
   ctx.strokeStyle = color;
-  ctx.lineWidth = lineWidth;
+  ctx.lineWidth = selected ? Math.max(3, lineWidth) : lineWidth;
   ctx.setLineDash(source === "auto" ? [5, 4] : source === "file" ? [2, 3] : []);
   ctx.beginPath();
   ctx.moveTo(alignedX, 0);
@@ -1915,15 +1921,14 @@ function drawEditorOverlay(
       if (!annotation) continue;
       const color = annotationColorForTheme(annotation.type, theme);
       const selectedAlpha = layout.selected ? 0.24 : 0.12;
-      ctx.fillStyle = color;
+      ctx.fillStyle = layout.selected ? palette.selectionFill : color;
       ctx.globalAlpha = selectedAlpha;
       if (layout.global) {
-        // Global events live in the rail; only a selected global event gets a
-        // narrow guide through the EEG so it remains obvious without masking
-        // the underlying tracing.
         ctx.fillRect(layout.x0, 0, Math.max(2, layout.x1 - layout.x0), EVENT_LANE);
         if (layout.selected) {
-          ctx.globalAlpha = 0.7;
+          // Selected events get a high-contrast full-height wash so the
+          // highlighted interval remains obvious over dense traces.
+          ctx.globalAlpha = 0.22;
           ctx.fillRect(layout.x0, EVENT_LANE, Math.max(1, layout.x1 - layout.x0), cssH - EVENT_LANE);
         }
       } else {
@@ -2377,6 +2382,28 @@ function drawDsaOverlay(
       const start = clamp(plotX(annotation.start), DSA_LEFT, DSA_LEFT + plotW);
       const end = clamp(plotX(annotation.end), start, DSA_LEFT + plotW);
       const markerWidth = Math.max(3, end - start);
+      if (annotation.id === selectedId) {
+        // Selected annotations should read directly on the heatmap, not only
+        // as a small event-rail dash. The dark/light edge keeps the marker
+        // legible over every PSD color in either theme.
+        ctx.fillStyle = palette.selectionFill;
+        ctx.globalAlpha = 0.24;
+        ctx.fillRect(start, plotTop, markerWidth, plotH);
+        ctx.globalAlpha = 0.98;
+        ctx.strokeStyle = palette.selectionEdge;
+        ctx.lineWidth = 5;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(start + 0.5, plotTop);
+        ctx.lineTo(start + 0.5, plotTop + plotH);
+        ctx.stroke();
+        ctx.strokeStyle = annotationColorForTheme(annotation.type, theme);
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(start + 0.5, plotTop);
+        ctx.lineTo(start + 0.5, plotTop + plotH);
+        ctx.stroke();
+      }
       ctx.fillStyle = annotationColorForTheme(annotation.type, theme);
       ctx.globalAlpha = annotation.id === selectedId ? 1 : annotation.source === "auto" ? 0.78 : 0.92;
       ctx.fillRect(start, plotTop + 2, markerWidth, 5);

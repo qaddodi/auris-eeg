@@ -132,6 +132,7 @@ export interface AppState {
   hiddenTrackIds: string[];
   showAuto: boolean;
   screeningBusy: boolean;
+  screeningProgress: number | null;
   showAnnotations: boolean;
   tool: "pan" | "annotate" | "caliper";
   pendingType: MorphologyType;
@@ -297,13 +298,21 @@ function deterministicChannelsFor(
   });
 }
 
-function screenInWorker(channels: ScreeningChannel[], durationSeconds: number): Promise<Annotation[]> {
+function screenInWorker(
+  channels: ScreeningChannel[],
+  durationSeconds: number,
+  onProgress: (fraction: number) => void,
+): Promise<Annotation[]> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(
       new URL("../workers/deterministic-screening.worker.ts", import.meta.url),
       { type: "module" },
     );
-    worker.onmessage = (event: MessageEvent<{ annotations?: Annotation[]; error?: string }>) => {
+    worker.onmessage = (event: MessageEvent<{ annotations?: Annotation[]; error?: string; progress?: number }>) => {
+      if (typeof event.data.progress === "number") {
+        onProgress(Math.max(0, Math.min(1, event.data.progress)));
+        return;
+      }
       worker.terminate();
       if (event.data.error) reject(new Error(event.data.error));
       else resolve(event.data.annotations ?? []);
@@ -331,16 +340,19 @@ export const useEegStore = create<AppState>((set, get) => {
     recording: LoadedRecording,
   ) => {
     const request = ++screeningRequest;
-    set({ screeningBusy: true });
+    set({ screeningBusy: true, screeningProgress: 0 });
     void screenInWorker(
       deterministicChannelsFor(segment, derivations, recording),
       segment.duration,
+      (fraction) => {
+        if (request === screeningRequest) set({ screeningProgress: fraction });
+      },
     ).then((auto) => {
       if (request !== screeningRequest || !get().showAuto) return;
       const existing = get().annotations.filter((annotation) => annotation.source !== "auto");
-      set({ annotations: [...existing, ...auto], screeningBusy: false });
+      set({ annotations: [...existing, ...auto], screeningBusy: false, screeningProgress: 1 });
     }).catch(() => {
-      if (request === screeningRequest) set({ screeningBusy: false });
+      if (request === screeningRequest) set({ screeningBusy: false, screeningProgress: null });
     });
   };
 
@@ -610,6 +622,7 @@ export const useEegStore = create<AppState>((set, get) => {
     hiddenTrackIds: [],
     showAuto: false,
     screeningBusy: false,
+    screeningProgress: null,
     showAnnotations: true,
     tool: "pan",
     pendingType: "comment",
@@ -619,11 +632,14 @@ export const useEegStore = create<AppState>((set, get) => {
     audibleScrub: false,
 
     loadFile: async (file, name) => {
+      screeningRequest += 1;
       set({
         status: "loading",
         error: null,
         playing: false,
         busy: true,
+        screeningBusy: false,
+        screeningProgress: null,
         annotations: [],
         annotationPast: [],
         annotationFuture: [],
@@ -1169,7 +1185,7 @@ export const useEegStore = create<AppState>((set, get) => {
       screeningRequest += 1;
       const existing = get().annotations.filter((a) => a.source !== "auto");
       const state = get();
-      set({ showAuto: v, screeningBusy: false, annotations: existing });
+      set({ showAuto: v, screeningBusy: false, screeningProgress: null, annotations: existing });
       if (v && state.rawSegment && state.recording) {
         refreshDeterministicAnnotations(state.rawSegment, state.derivations, state.recording);
       }

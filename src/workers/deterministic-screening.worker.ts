@@ -2,6 +2,7 @@
 
 import {
   detectDeterministicAnnotations,
+  type ScreeningProgress,
   type ScreeningChannel,
 } from "../lib/eeg/abnormality/screening.ts";
 
@@ -15,6 +16,11 @@ self.onmessage = (event: MessageEvent<ScreeningWorkerRequest>) => {
     const annotations = detectDeterministicAnnotations(
       event.data.channels,
       event.data.durationSeconds,
+      {
+        onProgress: (progress: ScreeningProgress) => {
+          self.postMessage({ progress: progress.fraction });
+        },
+      },
     );
     self.postMessage({ annotations });
   } catch (error) {

@@ -1029,12 +1029,17 @@ const ANNOTATION_TYPE_BY_DETECTOR: Record<ScreeningDetector, MorphologyType> = {
 export function detectDeterministicAnnotations(
   channels: readonly ScreeningInputChannel[],
   durationSeconds: number,
+  options: ScreeningOptions = {},
 ): Annotation[] {
   const duration = Math.max(0, durationSeconds);
   const context = clamp(duration || 30, 2, 300);
   const result = runDeterministicScreeningSync(
     { channels, durationSeconds: duration },
-    { contextWindowSeconds: context, maxContextWindowSeconds: context },
+    {
+      ...options,
+      contextWindowSeconds: context,
+      maxContextWindowSeconds: context,
+    },
   );
   const detectorCounts = new Map<ScreeningDetector, number>();
   const bucketCounts = new Map<string, number>();
