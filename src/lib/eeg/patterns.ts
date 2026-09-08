@@ -78,6 +78,10 @@ function median(values: number[]): number {
   return values.length % 2 === 0 ? (values[mid - 1]! + values[mid]!) / 2 : values[mid]!;
 }
 
+function mean(values: readonly number[]): number {
+  return values.length ? values.reduce((total, value) => total + value, 0) / values.length : 0;
+}
+
 interface BucketStats {
   center: number;
   scale: number;
