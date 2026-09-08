@@ -37,8 +37,10 @@ import {
 import {
   BAND_COLORS,
   BAND_LABELS,
+  bandFromHz,
   dsaRgb,
   dsaUnit,
+  freqWindow,
   type DsaFrame,
 } from "@/lib/eeg/spectrum";
 import { eegNow, useEegStore } from "@/store/eeg-store";
@@ -502,6 +504,88 @@ function drawLane(
   // Peak-hold columns: every source sample in a pixel contributes to that
   // pixel's min and max, so transients keep their true amplitude.
   drawPeakHoldEnvelope(ctx, trace, x0, plotW, mid, scale, sign, color, alpha, offset);
+}
+
+function drawFrequencyBandLane(
+  ctx: CanvasRenderingContext2D,
+  trace: TraceWindow,
+  samples: Float32Array,
+  sampleRate: number,
+  x0: number,
+  viewStart: number,
+  span: number,
+  plotW: number,
+  mid: number,
+  scale: number,
+  sign: number,
+  alpha: number,
+  offset = 0,
+  weight = 1,
+) {
+  const bandCount = Math.max(4, Math.min(96, Math.ceil(span / 0.25)));
+  const frequencies = freqWindow(
+    samples,
+    sampleRate,
+    viewStart,
+    viewStart + span,
+    bandCount,
+  );
+  const colorAt = (relativeX: number) => {
+    const index = Math.min(
+      frequencies.length - 1,
+      Math.max(0, Math.floor((Math.max(0, relativeX) / Math.max(1, plotW)) * frequencies.length)),
+    );
+    return BAND_COLORS[bandFromHz(frequencies[index] ?? 0)];
+  };
+
+  ctx.globalAlpha = alpha;
+  ctx.lineJoin = "miter";
+  ctx.lineCap = "butt";
+  ctx.lineWidth = Math.max(0.8, 0.95 * weight);
+  if (trace.mode === "native") {
+    if (trace.values.length < 2) {
+      ctx.globalAlpha = 1;
+      return;
+    }
+    let start = 0;
+    let color = colorAt(0);
+    const strokeSegment = (from: number, to: number, stroke: string) => {
+      ctx.strokeStyle = stroke;
+      ctx.beginPath();
+      for (let p = from; p <= to; p++) {
+        const sampleTime = trace.indices[p]! / sampleRate;
+        const xx = x0 + ((sampleTime - viewStart) / span) * plotW;
+        const yy = mid + sign * (trace.values[p]! - offset) * scale;
+        if (p === from) ctx.moveTo(xx, yy);
+        else ctx.lineTo(xx, yy);
+      }
+      ctx.stroke();
+    };
+    for (let p = 1; p < trace.values.length; p++) {
+      const relativeX = ((trace.indices[p]! / sampleRate - viewStart) / span) * plotW;
+      const nextColor = colorAt(relativeX);
+      if (nextColor !== color) {
+        strokeSegment(start, p, color);
+        start = p;
+        color = nextColor;
+      }
+    }
+    strokeSegment(start, trace.values.length - 1, color);
+  } else {
+    const minPx = 1 / (ctx.getTransform().a || 1);
+    for (const column of peakHoldColumns(trace, plotW)) {
+      const yA = mid + sign * (column.min - offset) * scale;
+      const yB = mid + sign * (column.max - offset) * scale;
+      ctx.fillStyle = colorAt(column.x + column.width / 2);
+      ctx.fillRect(
+        x0 + column.x,
+        Math.min(yA, yB),
+        Math.max(column.width, minPx),
+        Math.max(minPx, Math.abs(yB - yA)),
+      );
+    }
+  }
+  ctx.globalAlpha = 1;
 }
 
 /**
@@ -1717,22 +1801,41 @@ function drawEditor(
       : raw;
     const scale = displayScaleForChannel(laneHeight, s.sensitivityUv, tr.kind, profile);
     const weight = traceWeight(hovered);
-    drawLane(
-      ctx,
-      display,
-      plotX,
-      localViewStart,
-      span,
-      plotW,
-      mid,
-      scale,
-      sign,
-      color,
-      alpha,
-      0,
-      weight,
-      tr.sampleRate,
-    );
+    if (s.showDsaBands && tr.kind === "eeg") {
+      drawFrequencyBandLane(
+        ctx,
+        display,
+        tr.samples,
+        tr.sampleRate,
+        plotX,
+        localViewStart,
+        span,
+        plotW,
+        mid,
+        scale,
+        sign,
+        alpha,
+        0,
+        weight,
+      );
+    } else {
+      drawLane(
+        ctx,
+        display,
+        plotX,
+        localViewStart,
+        span,
+        plotW,
+        mid,
+        scale,
+        sign,
+        color,
+        alpha,
+        0,
+        weight,
+        tr.sampleRate,
+      );
+    }
     // The label is part of the lane, not part of the utility gutter. Keep it
     // painted after the trace even when S/M controls are collapsed so the
     // derivation name stays put at the start of every waveform.

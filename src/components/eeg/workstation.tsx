@@ -167,9 +167,9 @@ export function Workstation() {
           <Button
             size="iconSm"
             variant={showDsaBands ? "default" : "ghost"}
-            aria-label={showDsaBands ? "Hide DSA frequency bands" : "Show DSA frequency bands"}
+            aria-label={showDsaBands ? "Hide frequency bands on DSA and EEG traces" : "Show frequency bands on DSA and EEG traces"}
             aria-pressed={showDsaBands}
-            title={showDsaBands ? "Hide DSA frequency bands" : "Show DSA frequency bands"}
+            title={showDsaBands ? "Hide frequency bands on DSA and EEG traces" : "Show frequency bands on DSA and EEG traces"}
             onClick={() => setShowDsaBands(!showDsaBands)}
             disabled={!showDsa}
           >

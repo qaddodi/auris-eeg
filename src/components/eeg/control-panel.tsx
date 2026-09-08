@@ -438,7 +438,7 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
                 />
               </label>
               <label className="flex items-center justify-between gap-2 text-sm text-fg">
-                DSA frequency bands
+                Frequency band overlay
                 <input
                   type="checkbox"
                   checked={showDsaBands}
