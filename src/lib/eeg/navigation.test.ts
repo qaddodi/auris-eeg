@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   clampNavigationPosition,
   clampNavigationViewport,
+  centerAnnotationViewport,
   createNavigationState,
   ensureVisible,
   followNavigationViewport,
@@ -15,6 +16,13 @@ function state(options: Partial<Parameters<typeof createNavigationState>[0]> = {
 }
 
 describe("navigation geometry", () => {
+  it("centers a selected review span", () => {
+    assert.deepEqual(centerAnnotationViewport({ startSec: 0, durationSec: 10 }, 42, 43, 100), {
+      startSec: 37.5,
+      durationSec: 10,
+    });
+  });
+
   it("clamps positions and viewports to the recording", () => {
     assert.equal(clampNavigationPosition(-1, 100), 0);
     assert.equal(clampNavigationPosition(101, 100), 100);

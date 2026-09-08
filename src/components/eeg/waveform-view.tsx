@@ -73,7 +73,7 @@ const CHAIN_GAP = 7;
 function visibleTimelineAnnotations(state: ReturnType<typeof useEegStore.getState>): Annotation[] {
   if (!state.showAnnotations) return [];
   return state.annotations.filter(
-    (annotation) => annotation.source !== "auto" || (state.showAuto && annotation.type !== "qrs"),
+    (annotation) => annotation.source !== "auto" || state.showAuto,
   );
 }
 
@@ -1166,7 +1166,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
     const annotationCandidates = latest.showAnnotations
       ? latest.annotations.filter(
           (annotation) =>
-            annotation.source !== "auto" || (latest.showAuto && annotation.type !== "qrs"),
+                annotation.source !== "auto" || latest.showAuto,
         )
       : [];
     const annotationId = hitTestAnnotations(
@@ -1339,7 +1339,7 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
         const annotationCandidates = state.showAnnotations
           ? state.annotations.filter(
               (annotation) =>
-                annotation.source !== "auto" || (state.showAuto && annotation.type !== "qrs"),
+                annotation.source !== "auto" || state.showAuto,
             )
           : [];
         const annotationId = hitTestAnnotations(
@@ -1917,7 +1917,7 @@ function drawEditorOverlay(
   const viewEnd = viewStart + viewDur;
   if (showAnnotations) {
     const visible = annotations.filter(
-      (annotation) => annotation.source !== "auto" || (showAuto && annotation.type !== "qrs"),
+      (annotation) => annotation.source !== "auto" || showAuto,
     );
     const laneIds = tracks.filter((track) => track.kind !== "extra").map((track) => track.id);
     const laneHeight = Math.max(1, (cssH - RULER) / Math.max(1, laneIds.length));
@@ -2228,7 +2228,7 @@ function drawOverviewOverlay(
     ctx.fillRect(0, cssH - 18, cssW, 9);
     ctx.globalAlpha = 1;
     for (const annotation of annotations) {
-      if (annotation.source === "auto" && (annotation.type === "qrs" || !showAuto)) continue;
+      if (annotation.source === "auto" && !showAuto) continue;
       const start = clamp((annotation.start / total) * cssW, 0, cssW);
       const end = clamp((annotation.end / total) * cssW, start, cssW);
       const markerWidth = Math.max(3, end - start);
@@ -2464,7 +2464,7 @@ function drawDsaOverlay(
     ctx.fillRect(DSA_LEFT, plotTop, plotW, 9);
     ctx.globalAlpha = 1;
     for (const annotation of annotations) {
-      if (annotation.source === "auto" && (annotation.type === "qrs" || !showAuto)) continue;
+      if (annotation.source === "auto" && !showAuto) continue;
       const start = clamp(plotX(annotation.start), DSA_LEFT, DSA_LEFT + plotW);
       const end = clamp(plotX(annotation.end), start, DSA_LEFT + plotW);
       const markerWidth = Math.max(3, end - start);

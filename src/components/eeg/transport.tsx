@@ -133,7 +133,7 @@ export function Transport({
   const soundActive = soundMode === "experimental" || soundMode === "musical" ||
     ((soundMode === "evidence" || soundMode === "hybrid") && Boolean(evidencePreparation));
   const confirmed = annotations.filter((a) => a.source !== "auto").length;
-  const suggestions = annotations.filter((a) => a.source === "auto" && a.type !== "qrs").length;
+  const suggestions = annotations.filter((a) => a.source === "auto").length;
   const screeningPercent = Math.round(Math.max(0, Math.min(1, screeningProgress ?? 0)) * 100);
   const nextMode = nextThemeMode(themeMode);
   const themeLabel = themeMode[0]!.toUpperCase() + themeMode.slice(1);

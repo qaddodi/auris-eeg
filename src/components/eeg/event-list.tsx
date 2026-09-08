@@ -100,7 +100,7 @@ export function EventList() {
   const isEditable = selected?.source === "user";
   const trackLabels = new Map(tracks.map((track) => [track.id, track.label]));
   const hasNavigableAnnotations = annotations.some(
-    (annotation) => annotation.source !== "auto" || (showAuto && annotation.type !== "qrs"),
+    (annotation) => annotation.source !== "auto" || showAuto,
   );
 
   function channelsFor(annotation: Annotation): string {
@@ -113,7 +113,7 @@ export function EventList() {
   useEffect(() => setDraft(selected ? draftFor(selected) : null), [selected]);
 
   const visible = annotations
-    .filter((annotation) => annotation.source !== "auto" || (showAuto && annotation.type !== "qrs"))
+    .filter((annotation) => annotation.source !== "auto" || showAuto)
     .filter((annotation) => sourceFilter === "all" || annotation.source === sourceFilter)
     .filter((annotation) =>
       `${annotation.type} ${annotation.text} ${annotation.trackId ?? ""} ${annotation.trackIds?.join(" ") ?? ""}`

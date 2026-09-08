@@ -1181,7 +1181,7 @@ export const useEegStore = create<AppState>((set, get) => {
 
     nextAnnotation: (direction) => {
       const eligible = get().annotations
-        .filter((a) => a.source !== "auto" || (get().showAuto && a.type !== "qrs"))
+        .filter((a) => a.source !== "auto" || get().showAuto)
         .sort((a, b) => a.start - b.start || a.end - b.end || a.id.localeCompare(b.id));
       if (eligible.length === 0) return;
       const selected = get().selectedAnnotation;

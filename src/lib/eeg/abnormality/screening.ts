@@ -7,6 +7,7 @@ import type {
   ProcessedTrack,
 } from "../types.ts";
 import { detectTemporalPhenomena, type TemporalPhenomenonDetector } from "./phenomena.ts";
+import { detectReviewCandidates, vetoArtifactOverlaps } from "../patterns.ts";
 
 /**
  * Deterministic screening is intentionally a narrow, model-ready boundary.
@@ -1046,6 +1047,13 @@ const ANNOTATION_TYPE_BY_DETECTOR: Record<ScreeningDetector, MorphologyType> = {
   "clipping-saturation": "comment",
 };
 
+function annotationTypeForFinding(finding: ScreeningFinding): MorphologyType {
+  if (finding.detector !== "rhythmic-activity") return ANNOTATION_TYPE_BY_DETECTOR[finding.detector];
+  const frequency = finding.featureEvidence.find((item) => item.feature === "frequencyHz")?.value;
+  const posterior = finding.channelLabels.some((label) => /(?:P[0-9Z]|O[12]|P7|P8)/i.test(label));
+  return typeof frequency === "number" && frequency >= 8 && frequency <= 13 && posterior ? "alpha" : "comment";
+}
+
 /**
  * UI adapter for the existing review-marker surface. Event detectors retain
  * their measured interval. Record-level screens become short rail markers at
@@ -1059,12 +1067,19 @@ export function detectDeterministicAnnotations(
 ): Annotation[] {
   const duration = Math.max(0, durationSeconds);
   const context = clamp(duration || 30, 2, 300);
+  const progress = options.onProgress;
   const result = runDeterministicScreeningSync(
     { channels, durationSeconds: duration },
     {
       ...options,
       contextWindowSeconds: context,
       maxContextWindowSeconds: context,
+      onProgress: (update) => progress?.({
+        ...update,
+        // Pattern composition and annotation mapping still run after the
+        // screening loop. Reserve the final percentage for that work.
+        fraction: update.phase === "complete" ? 0.99 : Math.min(0.99, update.fraction),
+      }),
     },
   );
   const detectorCounts = new Map<ScreeningDetector, number>();
@@ -1086,32 +1101,63 @@ export function detectDeterministicAnnotations(
       return true;
     })
     .slice(0, 120);
-  return selected.map((finding) => {
+  const findingAnnotations = selected.map((finding) => {
     const exact = finding.eventInterval;
-    const start = clamp(exact?.start ?? 0, 0, duration);
-    const measuredEnd = exact ? clamp(Math.max(exact.end, start), start, duration) : start;
-    const measuredDuration = measuredEnd - start;
-    const reviewDuration = Math.min(measuredDuration, 10);
-    const end = exact
-      ? Math.min(duration, start + Math.max(0.02, reviewDuration))
-      : Math.min(duration, start + 0.2);
+    const measuredStart = clamp(exact?.start ?? 0, 0, duration);
+    const measuredEnd = exact ? clamp(Math.max(exact.end, measuredStart), measuredStart, duration) : measuredStart;
+    const measuredDuration = measuredEnd - measuredStart;
+    const reviewDuration = Math.min(10, Math.max(0.4, measuredDuration));
+    const center = exact ? (measuredStart + measuredEnd) / 2 : measuredStart + reviewDuration / 2;
+    const start = duration <= reviewDuration
+      ? 0
+      : clamp(center - reviewDuration / 2, 0, duration - reviewDuration);
+    const end = Math.min(duration, start + reviewDuration);
     const ids = finding.channelIds.filter((id) => channels.some((channel) => channel.id === id));
     const recordLevel = exact ? "" : "Record-level screen · ";
     const clippedInterval = exact && measuredDuration > reviewDuration + 1e-6
       ? ` · Measured span ${measuredDuration.toFixed(1)} s; marker shows the first ${reviewDuration.toFixed(0)} s review window.`
       : "";
+    const numericEvidence = finding.featureEvidence
+      .filter((item) => typeof item.value === "number" && Number.isFinite(item.value))
+      .slice(0, 5)
+      .map((item) => `${item.feature.replaceAll("_", " ")} ${Number(item.value).toFixed(2)}${item.units ? ` ${item.units}` : ""}`)
+      .join(" · ");
     return {
       id: `screen-${finding.id}`,
       start,
       end,
       trackId: ids.length === 1 ? ids[0]! : null,
       ...(ids.length > 1 ? { trackIds: ids } : {}),
-      type: ANNOTATION_TYPE_BY_DETECTOR[finding.detector],
-      text: `${finding.title} · ${recordLevel}${finding.summary}${clippedInterval}`,
+      type: annotationTypeForFinding(finding),
+      text: `${finding.title} · ${recordLevel}${finding.summary} · ${numericEvidence || `${reviewDuration.toFixed(2)} s measured span`}${clippedInterval} · expert review required`,
       source: "auto" as const,
       confidence: finding.confidence,
     };
-  }).sort((a, b) => a.start - b.start || b.confidence - a.confidence || a.id.localeCompare(b.id));
+  });
+  const normalizedChannels = channels.map(normalizeChannel).map((channel) => ({
+    id: channel.id,
+    label: channel.label,
+    laterality: channel.laterality,
+    kind: channel.kind === "unknown" ? "eeg" as const : channel.kind,
+    samples: channel.samples instanceof Float32Array ? channel.samples : Float32Array.from(Array.from(channel.samples, Number)),
+    sampleRate: channel.sampleRate,
+  }));
+  const patternAnnotations = detectReviewCandidates(normalizedChannels);
+  const artifacts = patternAnnotations.filter((annotation) => annotation.type === "blink" || annotation.type === "muscle" || annotation.type === "qrs");
+  const combined = vetoArtifactOverlaps([...patternAnnotations, ...findingAnnotations], artifacts);
+  const seen = new Set<string>();
+  const output = combined
+    .filter((annotation) => {
+      const ids = annotation.trackIds?.join(",") ?? annotation.trackId ?? "";
+      const key = `${annotation.type}|${Math.round(annotation.start * 1000)}|${Math.round(annotation.end * 1000)}|${ids}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.start - b.start || b.confidence - a.confidence || a.id.localeCompare(b.id))
+    .slice(0, 180);
+  progress?.({ phase: "complete", completed: 1, total: 1, fraction: 1 });
+  return output;
 }
 
 export function createDeterministicScreeningAdapter(): ScreeningAdapter {

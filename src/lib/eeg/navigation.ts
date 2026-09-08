@@ -157,6 +157,25 @@ export function ensureVisible(
   );
 }
 
+/** Center a selected review span while preserving the current zoom level. */
+export function centerAnnotationViewport(
+  viewport: NavigationViewport,
+  startSec: number,
+  endSec: number,
+  recordingDurationSec: number,
+): NavigationViewport {
+  const total = normalizeDuration(recordingDurationSec);
+  const current = clampNavigationViewport(viewport.startSec, viewport.durationSec, total);
+  const start = clampNavigationPosition(startSec, total);
+  const end = clampNavigationPosition(Math.max(start, endSec), total);
+  const center = (start + end) / 2;
+  return clampNavigationViewport(
+    center - current.durationSec / 2,
+    current.durationSec,
+    total,
+  );
+}
+
 /**
  * Shift a manual viewport along the recording timeline. Keeping this as a
  * pure geometry helper gives pointer, wheel, and keyboard panning identical
@@ -368,13 +387,10 @@ export function reduceNavigation(
       const next = { ...state, selectedAnnotationId: action.id };
       if (action.id == null || action.startSec == null) return next;
       const position = clampNavigationPosition(action.startSec, state.recordingDurationSec);
-      const positioned = { ...next, positionSec: position };
-      if (state.followMode === "following") {
-        return { ...positioned, viewport: viewportForPosition(positioned, position) };
-      }
+      const positioned = { ...next, positionSec: position, followMode: "manual" as const };
       return {
         ...positioned,
-        viewport: ensureVisible(
+        viewport: centerAnnotationViewport(
           state.viewport,
           action.startSec,
           action.endSec ?? action.startSec,

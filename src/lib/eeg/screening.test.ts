@@ -87,5 +87,17 @@ describe("deterministic phenomenon screening", () => {
     assert.equal(new Set(annotations.map((annotation) => annotation.id)).size, annotations.length);
     assert.ok(annotations.every((annotation) => annotation.end - annotation.start <= 10.000_001));
     assert.ok(annotations.some((annotation) => annotation.text.includes("marker shows")));
+    assert.ok(annotations.every((annotation) => annotation.end - annotation.start >= 0.4 || annotation.end === 12));
+    assert.ok(annotations.every((annotation) => /[0-9]/.test(annotation.text)));
+  });
+
+  it("maps a flat electrode to a bounded, track-specific quality marker", () => {
+    const flat = new Float32Array(12 * fs);
+    const annotations = detectDeterministicAnnotations([channel("F3", flat, "left")], 12);
+    const marker = annotations.find((annotation) => annotation.text.includes("Flat or disconnected"));
+    assert.ok(marker);
+    assert.deepEqual(marker!.trackIds ?? [marker!.trackId], ["F3"]);
+    assert.ok(marker!.end - marker!.start >= 0.4);
+    assert.match(marker!.text, /flatline|continuity|finite/i);
   });
 });
