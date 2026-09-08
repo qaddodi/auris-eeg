@@ -1562,6 +1562,25 @@ export function WaveformView({ effectiveTheme = "dark" }: { effectiveTheme?: Res
         <div className="pointer-events-none absolute left-2 top-1 text-[0.625rem] font-medium uppercase tracking-wider text-subtle">
           DSA · PSD (dB)
         </div>
+        {showDsaBands && (
+          <div
+            className="pointer-events-none absolute left-[6.5rem] right-[4rem] top-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-sm bg-bg/80 px-1.5 py-0.5 text-[0.5625rem] font-medium shadow-border"
+            aria-label="Frequency band legend"
+          >
+            {BAND_LABELS.map((band) => (
+              <span key={band.id} className="flex items-center gap-1 whitespace-nowrap">
+                <span
+                  className="size-2 rounded-[2px]"
+                  style={{ backgroundColor: BAND_COLORS[band.id] }}
+                  aria-hidden="true"
+                />
+                <span style={{ color: BAND_COLORS[band.id] }}>
+                  {band.glyph} {band.range} Hz
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <div
