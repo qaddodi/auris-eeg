@@ -250,6 +250,10 @@ function meanPowerSpec(
   if (list.length === 0) return null;
   const fs = list[0]!.sampleRate;
   const nFreq = Math.max(2, Math.floor((fMax * nextPowerOfTwo(win)) / fs) + 1);
+  // A plain mean can erase a focal rhythm when only a subset of channels has
+  // it. A gentle generalized mean preserves spatially localized power without
+  // behaving like a noisy channel-wise maximum.
+  const powerMeanExponent = 1.35;
   let acc: Float32Array | null = null;
   let nTime = Number.POSITIVE_INFINITY;
   for (const t of list) {
@@ -265,7 +269,8 @@ function meanPowerSpec(
             sourceNFreq - 1,
             Math.round((hz * nextPowerOfTwo(win)) / t.sampleRate),
           );
-          acc[ti * nFreq + fi] = spec[ti * sourceNFreq + sourceFi] ?? 0;
+          const power = spec[ti * sourceNFreq + sourceFi] ?? 0;
+          acc[ti * nFreq + fi] = Math.pow(Math.max(0, power), powerMeanExponent);
         }
       }
     } else {
@@ -277,15 +282,21 @@ function meanPowerSpec(
             sourceNFreq - 1,
             Math.round((hz * nextPowerOfTwo(win)) / t.sampleRate),
           );
+          const power = spec[ti * sourceNFreq + sourceFi] ?? 0;
           acc[ti * nFreq + fi] =
-            (acc[ti * nFreq + fi] ?? 0) + (spec[ti * sourceNFreq + sourceFi] ?? 0);
+            (acc[ti * nFreq + fi] ?? 0) + Math.pow(Math.max(0, power), powerMeanExponent);
         }
       }
     }
   }
   const n = list.length;
   const timeCount = Number.isFinite(nTime) ? Math.max(1, nTime) : 1;
-  if (acc && n > 1) for (let i = 0; i < acc.length; i++) acc[i]! /= n;
+  if (acc) {
+    const validLength = timeCount * nFreq;
+    for (let i = 0; i < validLength; i++) {
+      acc[i] = Math.pow(Math.max(0, (acc[i] ?? 0) / n), 1 / powerMeanExponent);
+    }
+  }
   return acc ? { spec: acc, nTime: timeCount, nFreq, fs } : null;
 }
 
@@ -515,7 +526,10 @@ export function dsaBandRgb(
   const normalized = Math.max(0, Math.min(1, u));
   // Keep the low-power floor close to the canvas background so quiet rows do
   // not falsely read as strong delta/theta activity.
-  const contrast = Math.max(0, (normalized - 0.2) / 0.8);
+  const band = bandFromHz(hz);
+  const floor =
+    band === "delta" ? 0.24 : band === "theta" ? 0.22 : band === "alpha" ? 0.19 : band === "beta" ? 0.12 : 0.1;
+  const contrast = Math.max(0, (normalized - floor) / Math.max(1e-6, 1 - floor));
   const relative = Math.max(0, Math.min(1, relativePower));
   const strength = Math.pow(contrast * Math.pow(relative, 1.15), 1.05);
   const colored = mixRgb(background, base, strength);

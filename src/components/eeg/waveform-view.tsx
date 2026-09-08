@@ -2276,10 +2276,13 @@ function dsaBandPresence(powers: BandPowers, hz: number): number {
   const peak = Math.max(...values);
   const share = value / total;
   const dominance = value / Math.max(1e-12, peak);
-  // A band below roughly 4% of the corrected spectrum should sit close to the
-  // DSA background. Stronger bands become visible progressively rather than
-  // appearing as full-color rows from a small amount of residual noise.
-  const shareGate = clamp((share - 0.04) / 0.16, 0, 1);
+  // Keep low-frequency residuals conservative, while allowing quieter but
+  // meaningful beta/gamma activity to register in the heatmap.
+  const shareFloor =
+    band === "delta" ? 0.055 : band === "theta" ? 0.05 : band === "alpha" ? 0.04 : band === "beta" ? 0.022 : 0.016;
+  const shareSpan =
+    band === "delta" ? 0.2 : band === "theta" ? 0.18 : band === "alpha" ? 0.16 : band === "beta" ? 0.12 : 0.1;
+  const shareGate = clamp((share - shareFloor) / shareSpan, 0, 1);
   return clamp(Math.pow(shareGate * (0.35 + 0.65 * dominance), 1.1), 0, 1);
 }
 
@@ -2306,6 +2309,10 @@ function drawDsa(
   const img = ctx.createImageData(plotW, plotH);
   const data = img.data;
   const mid = plotH / 2;
+  const bandIndexForHz = (hz: number) => {
+    const band = bandFromHz(hz);
+    return band === "delta" ? 0 : band === "theta" ? 1 : band === "alpha" ? 2 : band === "beta" ? 3 : 4;
+  };
   for (let x = 0; x < plotW; x++) {
     const ti = Math.min(frame.nTime - 1, Math.floor((x / plotW) * frame.nTime));
     const leftStart = ti * frame.nFreq;
@@ -2318,11 +2325,13 @@ function drawDsa(
       frame.r.subarray(rightStart, rightStart + frame.nFreq),
       frame.fMax,
     );
-    let leftPeak = 1e-20;
-    let rightPeak = 1e-20;
+    const leftBandPeaks = [1e-20, 1e-20, 1e-20, 1e-20, 1e-20];
+    const rightBandPeaks = [1e-20, 1e-20, 1e-20, 1e-20, 1e-20];
     for (let fi = 1; fi < frame.nFreq; fi++) {
-      leftPeak = Math.max(leftPeak, frame.l[ti * frame.nFreq + fi] ?? 0);
-      rightPeak = Math.max(rightPeak, frame.r[ti * frame.nFreq + fi] ?? 0);
+      const hz = (fi * frame.fMax) / Math.max(1, frame.nFreq - 1);
+      const bandIndex = bandIndexForHz(hz);
+      leftBandPeaks[bandIndex] = Math.max(leftBandPeaks[bandIndex]!, frame.l[ti * frame.nFreq + fi] ?? 0);
+      rightBandPeaks[bandIndex] = Math.max(rightBandPeaks[bandIndex]!, frame.r[ti * frame.nFreq + fi] ?? 0);
     }
     for (let y = 0; y < plotH; y++) {
       let src: Float32Array;
@@ -2338,7 +2347,8 @@ function drawDsa(
       }
       const p = src[ti * frame.nFreq + fBin] ?? 0;
       const hz = (fBin * frame.fMax) / Math.max(1, frame.nFreq - 1);
-      const peak = y < mid ? leftPeak : rightPeak;
+      const bandIndex = bandIndexForHz(hz);
+      const peak = (y < mid ? leftBandPeaks : rightBandPeaks)[bandIndex]!;
       const relativeDb = 10 * Math.log10(Math.max(1e-20, p) / peak);
       const relativePower = clamp(1 + relativeDb / 30, 0, 1);
       const bandPresence = dsaBandPresence(y < mid ? leftPowers : rightPowers, hz);
