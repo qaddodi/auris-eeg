@@ -442,7 +442,6 @@ export function ControlPanel({ onClose }: { onClose?: () => void }) {
                 <input
                   type="checkbox"
                   checked={showDsaBands}
-                  disabled={!showDsa}
                   onChange={(e) => setShowDsaBands(e.target.checked)}
                   className="size-4 accent-accent"
                 />

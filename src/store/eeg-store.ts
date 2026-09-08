@@ -875,7 +875,7 @@ export const useEegStore = create<AppState>((set, get) => {
     },
     setAboutOpen: (v) => set({ aboutOpen: v }),
     setKeysOpen: (v) => set({ keysOpen: v }),
-    setShowDsa: (v) => set(v ? { showDsa: v } : { showDsa: v, showDsaBands: false }),
+    setShowDsa: (v) => set({ showDsa: v }),
     setShowDsaBands: (v) => set({ showDsaBands: v }),
     setZoomLocked: (locked) => set({ zoomLocked: locked }),
     setAudibleScrub: (v) =>

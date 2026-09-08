@@ -259,7 +259,7 @@ export function Transport({
           <Button size="sm" variant={showDsa ? "default" : "ghost"} className={toolClass} aria-pressed={showDsa} title={showDsa ? "Hide DSA" : "Show DSA"} onClick={() => setShowDsa(!showDsa)}>
             <Activity aria-hidden="true" /> DSA
           </Button>
-          <Button size="sm" variant={showDsaBands ? "default" : "ghost"} className={toolClass} aria-pressed={showDsaBands} disabled={!showDsa} title={showDsaBands ? "Hide frequency bands on DSA and EEG traces" : "Show frequency bands on DSA and EEG traces"} onClick={() => setShowDsaBands(!showDsaBands)}>
+          <Button size="sm" variant={showDsaBands ? "default" : "ghost"} className={toolClass} aria-pressed={showDsaBands} title={showDsaBands ? "Hide frequency bands on DSA and EEG traces" : "Show frequency bands on DSA and EEG traces"} onClick={() => setShowDsaBands(!showDsaBands)}>
             <Layers aria-hidden="true" /> Bands
           </Button>
         </div>

@@ -171,7 +171,6 @@ export function Workstation() {
             aria-pressed={showDsaBands}
             title={showDsaBands ? "Hide frequency bands on DSA and EEG traces" : "Show frequency bands on DSA and EEG traces"}
             onClick={() => setShowDsaBands(!showDsaBands)}
-            disabled={!showDsa}
           >
             <Layers aria-hidden="true" />
           </Button>
