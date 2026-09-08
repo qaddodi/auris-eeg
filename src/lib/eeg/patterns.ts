@@ -424,7 +424,7 @@ function detectMuscleIntervals(tracks: readonly ProcessedTrack[]): ArtifactInter
     for (let start = 0; start + window <= track.samples.length; start += Math.max(1, Math.round(window / 2))) {
       const values = Array.from(track.samples.subarray(start, start + window)).filter(Number.isFinite);
       if (values.length < 8) continue;
-      const center = median(values);
+      const center = median([...values]);
       const scale = Math.max(1e-9, median(values.map((value) => Math.abs(value - center))) * 1.4826);
       let crossings = 0;
       let jump = 0;
@@ -440,11 +440,11 @@ function detectMuscleIntervals(tracks: readonly ProcessedTrack[]): ArtifactInter
       }
       const zeroRate = crossings / (values.length / track.sampleRate);
       const jumpRatio = jump / Math.max(1, values.length - 1) / scale;
-      // Some sampled periodic signals hit zero exactly, making the crossing
-      // count sparse even when the high-frequency jump evidence is strong.
-      // Require either robust crossing evidence or the independent jump-rate
-      // evidence so those signals still receive a muscle review marker.
-      if (zeroRate < 30 && jumpRatio < 0.75) continue;
+      // Some sampled periodic signals hit zero exactly; the sign-tracking
+      // above bridges those exact-zero samples. Require both sustained
+      // high-frequency crossings and jump evidence so one sharp transient
+      // cannot be mislabeled as muscle activity and veto a morphology.
+      if (zeroRate < 30 || jumpRatio < 0.55) continue;
       const span = boundedSpan(start / track.sampleRate, (start + window) / track.sampleRate, 0.4, track.samples.length / track.sampleRate);
       output.push({
         type: "muscle",
