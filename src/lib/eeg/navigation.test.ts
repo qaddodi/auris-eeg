@@ -192,7 +192,7 @@ describe("navigation state machine", () => {
     assert.deepEqual(looped.viewport, { startSec: 0, durationSec: 10 });
   });
 
-  it("seeks and keeps an annotation visible without disabling follow", () => {
+  it("centers an annotation and disables follow for focused review", () => {
     let current = state({ positionSec: 10, viewport: { durationSec: 10 } });
     current = reduceNavigation(current, {
       type: "select-annotation",
@@ -202,11 +202,11 @@ describe("navigation state machine", () => {
     });
     assert.equal(current.selectedAnnotationId, "ann-1");
     assert.equal(current.positionSec, 80);
-    assert.equal(current.followMode, "following");
-    assert.deepEqual(current.viewport, { startSec: 77, durationSec: 10 });
+    assert.equal(current.followMode, "manual");
+    assert.deepEqual(current.viewport, { startSec: 76, durationSec: 10 });
   });
 
-  it("ensures a selected annotation is visible in manual mode", () => {
+  it("centers a selected annotation in manual mode", () => {
     let current = state({
       followMode: "manual",
       viewport: { startSec: 40, durationSec: 10 },
@@ -220,7 +220,7 @@ describe("navigation state machine", () => {
     });
     assert.equal(current.followMode, "manual");
     assert.equal(current.positionSec, 80);
-    assert.deepEqual(current.viewport, { startSec: 77, durationSec: 10 });
+    assert.deepEqual(current.viewport, { startSec: 76, durationSec: 10 });
   });
 
   it("keeps hover separate from the review position", () => {
@@ -267,11 +267,9 @@ describe("navigation state machine", () => {
       type: "playback-tick",
       positionSec: 95,
     });
-    assert.equal(current.followMode, "following");
+    assert.equal(current.followMode, "manual");
     assert.equal(current.selectedAnnotationId, "ann-1");
     assert.equal(current.positionSec, 95);
-    // Near the recording end, the viewport is clamped to its final legal
-    // start rather than allowing the event cursor to leave the page.
-    assert.deepEqual(current.viewport, { startSec: 80, durationSec: 20 });
+    assert.deepEqual(current.viewport, { startSec: 0, durationSec: 20 });
   });
 });
