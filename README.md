@@ -70,3 +70,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/EEG_READER.md](docs/EEG_
 [docs/SONIFICATION_ARCHITECTURE.md](docs/SONIFICATION_ARCHITECTURE.md), and
 [research/EVIDENCE.md](research/EVIDENCE.md) for implementation and evidence
 boundaries.
+
+## Copyright
+
+© 2026 Mohammad Almeqdadi. All rights reserved.
